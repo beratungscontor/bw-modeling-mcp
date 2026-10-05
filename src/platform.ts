@@ -270,6 +270,8 @@ const COLLECTION_NEEDS: Record<string, string[]> = {
   // `plcr` is the characteristic relationships, which is what the planning properties of a
   // provider are read from (TLOGO PLSE / PLSQ / PLCR, per RSTLOGOPROP).
   bw_get_planning_function: ['plse'],
+  bw_update_planning_function: ['plse'],
+  bw_create_planning_function: ['plse'],
   bw_get_planning_properties: ['plcr'],
   bw_get_planning_sequence: ['plsq'],
 

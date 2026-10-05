@@ -1,6 +1,6 @@
 # Tools Reference
 
-Every tool the server exposes — 108 in total — with what it does and the parameters that matter.
+Every tool the server exposes — 110 in total — with what it does and the parameters that matter.
 Tools marked _(Read only)_ change nothing in BW; everything else writes, activates, runs, or unlocks.
 A writing tool refuses a parameter it does not declare and names the ones it takes, so a misspelt
 parameter cannot be reported as applied.
@@ -24,7 +24,7 @@ For the architecture and the full endpoint list, see [ARCHITECTURE.md](ARCHITECT
 - [Open Hub Destination](#open-hub-destination) — 1 tool
 - [BW Query — modeling](#bw-query--modeling) — 17 tools
 - [BW Query — data & roles](#bw-query--data--roles) — 6 tools
-- [Integrated Planning](#integrated-planning) — 6 tools
+- [Integrated Planning](#integrated-planning) — 8 tools
 - [Process Chains — authoring](#process-chains--authoring) — 13 tools
 - [Process Chains — monitoring](#process-chains--monitoring) — 3 tools
 - [Requests, Runtime & Remodeling](#requests-runtime--remodeling) — 7 tools
@@ -367,7 +367,13 @@ Read the Planning Properties (PLCR) of a plan-enabled InfoProvider — key-date 
 Read a Planning Sequence (PLSQ) — the ordered list of planning steps, each with its type code, aggregation level, planning function and filter name.
 
 ### `bw_get_planning_function` _(Read only)_
-Read a Planning Function (PLSE) — a planning operation (formula/FOX, copy, delete, repost, distribution, currency translation, custom exit, …) tied to an aggregation level. Returns the function type, aggregation level, documentation, the characteristic usage list, and the full parameter tree; for FORMULA functions the FOX code is surfaced as source.
+Read a Planning Function (PLSE) — a planning operation (formula/FOX, copy, delete, repost, distribution, currency translation, custom exit, …) tied to an aggregation level. Returns the function type, aggregation level, documentation, the characteristic usage list, and the full parameter tree; for FORMULA functions the FOX code is surfaced as source. The **block characteristics** are listed separately: every characteristic that is not to be changed. The function runs once per combination of their values, so records that differ in one of them never reach it in the same call — a custom exit that is meant to combine such records sees each of them alone. Table parameters show the key figure of each row next to the values.
+
+### `bw_update_planning_function`
+Change a Planning Function: the characteristic usage (`FIELDS_TO_BE_CHANGED`, `FIELD_FOR_CONDITIONS`, `NONE`), the conditions, single-value parameters and the description. Only what is passed changes. A condition is given per characteristic and its constraints replace the existing ones (operators `Equal`, `NotEqual`, `Between`, `NotBetween`, `Less`, `LessEqual`, `Greater`, `GreaterEqual`, optionally `exclude`); without constraints it is removed. A parameter is named as in the parameter tree — by its path (`STRUCTURE/FIELD`) or, where unambiguous, its own name — and takes a constant or a variable; a table parameter takes the row to set. The FOX code of a FORMULA function is the value of its `FLINE` parameter. Values are given in external format, as typed in the modeling tools (a month as `MM.YYYY`); characteristic values are checked against master data, and an unknown one is reported as an invalid format. Characteristics of a level on a CompositeProvider are accepted with or without the provider prefix. The function is saved straight to the active version; there is no activation step. The answer says whether anything was saved: an invalid value rejects the whole save, while a FOX syntax error is reported as an error and the function is stored with it. Key figure and data selections are not changed by this tool.
+
+### `bw_create_planning_function`
+Create a Planning Function of a given type (`0RSPL_FORMULA`, `0RSPL_COPY`, a custom type, …) on an aggregation level. The server sets up the parameters of the type and gives every characteristic the usage `NONE`; characteristic usage, conditions and parameter values can be passed in the same call and are applied right after. The InfoArea defaults to that of the aggregation level, the package to `$TMP`. Saved active.
 
 ---
 

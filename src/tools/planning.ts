@@ -942,6 +942,8 @@ interface PlseParameter {
   selections: PlseSelectionRange[];
   /** A data-selection parameter (type 3) restricts characteristics, not a single value. */
   fieldSelections: PlseCondition[];
+  /** A key figure selection (type 2) names one key figure per table row. */
+  restrictions: string[];
 }
 
 interface PlseCharUsage {
@@ -1096,7 +1098,7 @@ function parsePlseParameters(xml: string): PlseParameter[] {
     };
 
     if (match[2] === '/>') {
-      params.push({ ...base, children: [], selections: [], fieldSelections: [] });
+      params.push({ ...base, children: [], selections: [], fieldSelections: [], restrictions: [] });
       continue;
     }
 
@@ -1138,6 +1140,9 @@ function parsePlseParameters(xml: string): PlseParameter[] {
       // parameters, as with selectionRange above: the body of a structure parameter contains
       // its children, whose selections would otherwise be repeated on the parent.
       fieldSelections: children.length === 0 ? parseFieldSelections(body, 'FieldSelection') : [],
+      restrictions: children.length === 0
+        ? [...body.matchAll(/<restriction\b[^>]*?\bcharacteristic="([^"]*)"/g)].map((r) => r[1].slice(r[1].lastIndexOf('/') + 1))
+        : [],
     });
 
     // Advance past the closing tag so the outer loop skips nested parameters
@@ -1187,6 +1192,10 @@ function formatPlseParameters(params: PlseParameter[], indent: number): string[]
       if (s.toValue !== undefined) {
         lines.push(`${pad}    to ${s.toType}: "${s.toValue}"`);
       }
+    }
+
+    for (const r of p.restrictions) {
+      lines.push(`${pad}  = ${r}`);
     }
 
     for (const fs of p.fieldSelections) {
@@ -1290,6 +1299,20 @@ export async function bwGetPlanningFunction(client: BwClient, funcName: string):
       let line = `  ${c.infoObject}  [${c.fieldUsage}]`;
       if (c.isChangeable === 'true') line += '  changeable';
       lines.push(line);
+    }
+
+    // Easy to overlook in the list above, and the usual reason why records that a function is
+    // meant to combine never reach it together.
+    const block = info.charUsages.filter((c) => c.fieldUsage !== 'FIELDS_TO_BE_CHANGED');
+    lines.push('', `── Block Characteristics (${block.length}) ──`);
+    if (block.length === 0) {
+      lines.push('  (none — every characteristic is to be changed)');
+    } else {
+      lines.push(
+        '  Not to be changed, so the function runs once per combination of their values:',
+        '  records that differ in one of them are never processed in the same call.'
+      );
+      lines.push(`  ${block.map((c) => c.infoObject).join(', ')}`);
     }
   }
 

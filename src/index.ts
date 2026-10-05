@@ -100,6 +100,13 @@ import {
   bwGetPlanningSequence,
   bwGetPlanningFunction,
 } from './tools/planning.js';
+import {
+  bwUpdatePlanningFunction,
+  bwCreatePlanningFunction,
+  type CharUsageChange,
+  type ConditionChange,
+  type ParameterChange,
+} from './tools/planning_function_write.js';
 import { bwListProcessChainRuns, bwGetProcessChainRunDetail, bwListProcessChainLastStatus } from './tools/process_chain_monitor.js';
 import { bwCreateProcessChain, bwUpdateProcessChain, bwActivateProcessChain, bwAddProcessChainErrorLinks, bwSwapProcessChainDtp, bwAppendProcessChainDtp, bwAddProcessChainProgram, bwAddProcessChainEdge, bwRemoveProcessChainEdge, bwRemoveProcessChainStep, bwCreateDecisionVariant, CreateProcessChainParams, UpdateProcessChainParams, EdgeDef, EdgeStatus, TriggerEventConfig } from './tools/processchain_write.js';
 import { bwCreateTransportTask } from './tools/transport.js';
@@ -236,6 +243,91 @@ const EXCEPTION_AGGREGATION_PROPS = {
 };
 
 // ── Tool definitions ─────────────────────────────────────────────────────────
+
+
+const PLSE_CHANGE_PROPERTIES = {
+  char_usage: {
+    type: 'array',
+    description:
+      'Characteristic usage per characteristic. FIELDS_TO_BE_CHANGED: the function may change ' +
+      'its values, and records that differ in it are processed together. FIELD_FOR_CONDITIONS: ' +
+      'not changed, but conditions may restrict it. NONE: neither. Every characteristic that is ' +
+      'not FIELDS_TO_BE_CHANGED is a block characteristic — the function runs once per ' +
+      'combination of their values. On a CompositeProvider the bare characteristic name is ' +
+      'accepted as well as the prefixed one.',
+    items: {
+      type: 'object',
+      properties: {
+        characteristic: { type: 'string', description: 'Characteristic name (e.g. "IOBJ_NAME").' },
+        usage: { type: 'string', enum: ['FIELDS_TO_BE_CHANGED', 'FIELD_FOR_CONDITIONS', 'NONE'] },
+      },
+      required: ['characteristic', 'usage'],
+    },
+  },
+  conditions: {
+    type: 'array',
+    description:
+      'Conditions of the rule, per characteristic. The given constraints replace every ' +
+      'constraint the characteristic has; an empty or omitted constraints list removes the ' +
+      'condition. A condition is only valid on a characteristic with usage FIELD_FOR_CONDITIONS.',
+    items: {
+      type: 'object',
+      properties: {
+        characteristic: { type: 'string', description: 'Characteristic name (e.g. "IOBJ_NAME").' },
+        constraints: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              operator: {
+                type: 'string',
+                enum: ['Equal', 'NotEqual', 'Between', 'NotBetween', 'Less', 'LessEqual', 'Greater', 'GreaterEqual'],
+                description: 'Defaults to "Equal".',
+              },
+              value: { type: 'string', description: 'Constant value in external (display) format, as entered in the modeling tools — a calendar month as "MM.YYYY", not "YYYYMM".' },
+              to_value: { type: 'string', description: 'Upper bound for Between / NotBetween.' },
+              variable: { type: 'string', description: 'Variable name, used instead of value (e.g. "VARIABLE_NAME").' },
+              exclude: { type: 'boolean', description: 'Exclude the selection instead of including it.' },
+            },
+          },
+        },
+      },
+      required: ['characteristic'],
+    },
+  },
+  parameters: {
+    type: 'array',
+    description:
+      'Parameter values of the rule, as shown in the parameter tree of bw_get_planning_function. ' +
+      'Applies to single-value parameters; a nested one may be named by its path ' +
+      '("STRUCTURE/FIELD") or, where unambiguous, by its own name. Pass value for a constant ' +
+      'or variable for a variable reference. The FOX code of a FORMULA function is the value ' +
+      'of its FLINE parameter. Data-selection parameters are not changed by this tool.',
+    items: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Parameter name or path (e.g. "PARAM_NAME").' },
+        value: { type: 'string', description: 'Constant value in external (display) format. Multi-line FOX code may use plain line breaks.' },
+        variable: { type: 'string', description: 'Variable name (e.g. "VARIABLE_NAME").' },
+        row: {
+          type: 'number',
+          description:
+            'For a table parameter: the 1-based table row to set. Required when the parameter ' +
+            'holds several values; the key figure selection next to it says which row is which.',
+        },
+      },
+      required: ['name'],
+    },
+  },
+  rule: {
+    type: 'number',
+    description: 'For function types with several rules: the 1-based rule that conditions and parameters apply to. Defaults to 1.',
+  },
+  transport: {
+    type: 'string',
+    description: 'Transport request number. Required on systems with transport obligation.',
+  },
+};
 
 const TOOL_DEFINITIONS = [
     {
@@ -4338,7 +4430,10 @@ const TOOL_DEFINITIONS = [
         'documentation, status, InfoArea, package, the characteristic usage list ' +
         '(role of each characteristic in the function), and the full parameter tree ' +
         'with nested structure and values. For FORMULA functions the FOX code surfaces ' +
-        'as the value of the FLINE parameter.',
+        'as the value of the FLINE parameter. The block characteristics — every characteristic ' +
+        'that is not to be changed — are listed separately: the function runs once per ' +
+        'combination of their values, so records that differ in one of them never meet in ' +
+        'the same call.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -4348,6 +4443,66 @@ const TOOL_DEFINITIONS = [
           },
         },
         required: ['planning_function_name'],
+      },
+    },
+    {
+      name: 'bw_update_planning_function',
+      description:
+        'Change an existing Planning Function (TLOGO PLSE): the characteristic usage ' +
+        '(FIELDS_TO_BE_CHANGED / FIELD_FOR_CONDITIONS / NONE), the conditions, single-value ' +
+        'parameter values (constant or variable, including the FOX code of a FORMULA function) ' +
+        'and the description. Changes not passed stay as they are. The function is saved ' +
+        'straight to the active version — there is no activation step. ' +
+        'Before changing the code of a custom exit function, check the block characteristics ' +
+        'with bw_get_planning_function: records meant to be combined in one call must not ' +
+        'differ in any of them.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          planning_function_name: {
+            type: 'string',
+            description: 'Technical name of the Planning Function (e.g. "OBJECT_NAME").',
+          },
+          description: { type: 'string', description: 'New description.' },
+          ...PLSE_CHANGE_PROPERTIES,
+        },
+        required: ['planning_function_name'],
+      },
+    },
+    {
+      name: 'bw_create_planning_function',
+      description:
+        'Create a Planning Function (TLOGO PLSE) of a given function type on an aggregation ' +
+        'level. The server fills in the parameter skeleton of the function type and a usage of ' +
+        'NONE for every characteristic; characteristic usage, conditions and parameter values ' +
+        'can be passed right away and are applied after the create. Saved active — there is no ' +
+        'activation step. Read an existing function of the same type with ' +
+        'bw_get_planning_function to see which parameters a type has.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          planning_function_name: {
+            type: 'string',
+            description: 'Technical name of the new Planning Function (e.g. "OBJECT_NAME").',
+          },
+          label: { type: 'string', description: 'Description of the Planning Function.' },
+          aggregation_level: {
+            type: 'string',
+            description: 'Aggregation Level the function works on (e.g. "OBJECT_NAME").',
+          },
+          function_type: {
+            type: 'string',
+            description:
+              'Planning function type (e.g. "0RSPL_FORMULA", "0RSPL_COPY", "0RSPL_DELETE", or a custom type).',
+          },
+          info_area: {
+            type: 'string',
+            description: 'InfoArea. Defaults to the InfoArea of the aggregation level.',
+          },
+          package: { type: 'string', description: 'Package. Defaults to "$TMP".' },
+          ...PLSE_CHANGE_PROPERTIES,
+        },
+        required: ['planning_function_name', 'label', 'aggregation_level', 'function_type'],
       },
     },
     {
@@ -6309,6 +6464,36 @@ async function handleToolCall(
 
       case 'bw_get_planning_function':
         text = await bwGetPlanningFunction(client, args?.planning_function_name as string);
+        break;
+
+      case 'bw_update_planning_function':
+        text = await bwUpdatePlanningFunction(
+          client,
+          args?.planning_function_name as string,
+          {
+            description: args?.description as string | undefined,
+            charUsage: args?.char_usage as CharUsageChange[] | undefined,
+            conditions: args?.conditions as ConditionChange[] | undefined,
+            parameters: args?.parameters as ParameterChange[] | undefined,
+            rule: args?.rule as number | undefined,
+          },
+          { transport: args?.transport as string | undefined }
+        );
+        break;
+
+      case 'bw_create_planning_function':
+        text = await bwCreatePlanningFunction(client, args?.planning_function_name as string, {
+          label: args?.label as string,
+          aggregationLevel: args?.aggregation_level as string,
+          functionType: args?.function_type as string,
+          infoArea: args?.info_area as string | undefined,
+          package: args?.package as string | undefined,
+          transport: args?.transport as string | undefined,
+          charUsage: args?.char_usage as CharUsageChange[] | undefined,
+          conditions: args?.conditions as ConditionChange[] | undefined,
+          parameters: args?.parameters as ParameterChange[] | undefined,
+          rule: args?.rule as number | undefined,
+        });
         break;
 
       case 'bw_get_planning_sequence':

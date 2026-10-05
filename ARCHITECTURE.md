@@ -238,6 +238,8 @@ src/
     ├── planning.ts       # bw_get_aggregation_level, bw_create_aggregation_level,
     │                     # bw_update_aggregation_level, bw_get_planning_properties,
     │                     # bw_get_planning_sequence, bw_get_planning_function
+    ├── planning_function_write.ts # bw_create_planning_function, bw_update_planning_function —
+    │                              # lock/PUT/unlock on /plse/{name}/a, saved active
     ├── process_chain_monitor.ts # bw_list_process_chain_runs, bw_get_process_chain_run_detail,
     │                            # bw_list_process_chain_last_status — OData-based monitoring
     ├── processchain.ts   # bw_get_process_chain — reads RSPC via bw4 API; auto-fetches variant details per step
@@ -352,7 +354,7 @@ system serves a lower resource version than the fallback.
 | Unit Conversion Type | `/sap/bw/modeling/uomt/{objname}` | `uomt-v1_0_0+xml` |
 | Key Date Derivation Type | `/sap/bw/modeling/thjt/{objname}` | `thjt-v1_0_0+xml` |
 | Data Slices | `/sap/bw/modeling/plds/{pldsnm}` | `plds-v1_0_0+xml` |
-| Planning Functions | `/sap/bw/modeling/plse/{plsenm}` | `plse-v2_0_0+xml` |
+| Planning Functions | `/sap/bw/modeling/plse/{plsenm}/a` (read; lock, PUT and unlock on the same path — the PUT saves active) | `plse-v2_0_0+xml` |
 | Planning Sequence | `/sap/bw/modeling/plsq/{plsqnm}` | `plsq-v1_0_0+xml` |
 | Planning Function Type | `/sap/bw/modeling/plst/{plstnm}` | `plst-v1_0_0+xml` |
 

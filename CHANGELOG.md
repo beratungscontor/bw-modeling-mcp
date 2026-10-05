@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Planning functions can be changed and created** — `bw_update_planning_function` sets the characteristic usage (`FIELDS_TO_BE_CHANGED`, `FIELD_FOR_CONDITIONS`, `NONE`), adds, replaces and removes conditions, sets single-value parameters to a constant or a variable — including the FOX code of a FORMULA function and single rows of a table parameter — and changes the description. `bw_create_planning_function` creates a function of any type on an aggregation level and applies the same settings in the same call. Until now a planning function could only be read, so a wrong usage had to be corrected by hand in the modeling tools — typically the one fix an exit function needs after its code has already been changed. The function is saved straight to the active version. The answer says whether anything was saved, because the backend does not treat errors alike: an invalid value rejects the save, while a FOX syntax error is reported as an error and the function is stored with it. Verified on BW/4HANA; on a classic release the planning resource does not exist and both tools are hidden.
+
+### Improved
+
+- **`bw_get_planning_function` names the block characteristics** — every characteristic that is not to be changed, with the reminder that the function runs once per combination of their values. Records that differ in one of them never reach the function together, and the plain usage list made that easy to miss: an exit change meant to merge such records has no effect until the usage is changed. Table parameters also show the key figure of each row, so the values next to them can be told apart.
+
 ## [1.7.1] — 2026-10-01
 
 ### Fixed
