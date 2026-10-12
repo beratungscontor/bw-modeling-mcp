@@ -44,6 +44,10 @@ export interface CreateTransformationArgs {
   // object type is IOBJ. Selects the InfoObject facet (text table, attributes, hierarchy).
   source_object_subtype?: string;
   target_object_subtype?: string;
+  // Transport request for a transportable package.
+  transport?: string;
+  // Activate right after the create, with the create's own lock.
+  activate?: boolean;
 }
 
 /**
@@ -143,9 +147,11 @@ export async function bwCreateTransformation(
   const copyParams = args.copy_from_transformation
     ? `&copyFromObjectName=${args.copy_from_transformation.toUpperCase()}&copyFromObjectType=TRFN`
     : '';
-  const createPath = `/sap/bw/modeling/trfn/${bwSeg(trfnLower)}?lockHandle=${lockHandle}${copyParams}`;
+  const transport = args.transport?.trim().toUpperCase();
+  const corrNrParam = transport ? `corrNr=${encodeURIComponent(transport)}&` : '';
+  const createPath = `/sap/bw/modeling/trfn/${bwSeg(trfnLower)}?${corrNrParam}lockHandle=${lockHandle}${copyParams}`;
 
-  // Session B: eigene Session + CSRF-Token, POST mit lockHandle aus Session A
+  // The create POST runs in a session of its own; the lock handle is session-independent.
   const client2 = createClientFromEnv();
   await client2.getCsrfToken();
   await client2.postWithCsrf(
@@ -167,7 +173,29 @@ export async function bwCreateTransformation(
     );
   }
 
-  // Step 5: Unlock (CREA lock is no longer needed after successful creation)
+  const created = {
+    transformation_name: trfnName,
+    source: { type: srcType, name: srcName },
+    target: { type: tgtType, name: tgtName },
+    package: pkg,
+    ...(transport ? { transport } : {}),
+  };
+
+  // Step 5a: activate with the CREA lock; bw_activate releases it through this client.
+  if (args.activate) {
+    const activation = JSON.parse(await bwActivate(client, 'trfn', trfnLower, lockHandle, transport));
+    return JSON.stringify({
+      success: activation.success === true,
+      ...created,
+      activation,
+      message: activation.success === true
+        ? `Transformation '${trfnName}' created and activated.`
+        : `Transformation '${trfnName}' created, but its activation reported errors (see activation.messages). ` +
+          'It exists inactive; fix the rules and call bw_activate with object_type "trfn".',
+    });
+  }
+
+  // Step 5b: Unlock (CREA lock is no longer needed after successful creation)
   try {
     await client.unlock('trfn', trfnLower);
   } catch (unlockErr) {
@@ -176,10 +204,7 @@ export async function bwCreateTransformation(
 
   return JSON.stringify({
     success: true,
-    transformation_name: trfnName,
-    source: { type: srcType, name: srcName },
-    target: { type: tgtType, name: tgtName },
-    package: pkg,
+    ...created,
     message: `Transformation '${trfnName}' created inactive. Call bw_activate with object_type "trfn" to activate.`,
   });
 }

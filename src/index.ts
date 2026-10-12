@@ -719,7 +719,8 @@ const TOOL_DEFINITIONS = [
       description:
         'Create a new Transformation between two BW objects (aDSO, DataSource, InfoSource, etc.). ' +
         'The Transformation name is server-generated (32-char UUID-like key). ' +
-        'Created inactive — call bw_activate with object_type "trfn" afterwards.',
+        'Created inactive — call bw_activate with object_type "trfn" afterwards, or pass activate: true. ' +
+        'In a transportable package pass the transport request.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -758,6 +759,14 @@ const TOOL_DEFINITIONS = [
           target_object_subtype: {
             type: 'string',
             description: 'InfoObject sub-type of the target. Only applies when target_object_type is IOBJ. Valid values: TEXT (text table), ATTR (attributes / master data), HIER (hierarchy).',
+          },
+          transport: {
+            type: 'string',
+            description: 'Transport request (e.g. "DEVK900123") to record the transformation on. Needed for a transportable package; with "activate" it is passed to the activation as well.',
+          },
+          activate: {
+            type: 'boolean',
+            description: 'Activate the transformation in the same call (default false). The answer then carries the activation messages, and success reflects the activation.',
           },
         },
         required: ['source_object_type', 'source_object_name', 'target_object_type', 'target_object_name'],
@@ -5674,6 +5683,8 @@ async function handleToolCall(
           copy_from_transformation: args?.copy_from_transformation as string | undefined,
           source_object_subtype: args?.source_object_subtype as string | undefined,
           target_object_subtype: args?.target_object_subtype as string | undefined,
+          transport: args?.transport as string | undefined,
+          activate: args?.activate === true,
         });
         break;
 

@@ -154,7 +154,7 @@ Update an existing InfoSource — fields and description.
 Read a Transformation structure including all field mapping rules, routines, source, and target. A rule into a target key figure shows its aggregation type (`{AGGREGATION: SUM}`, `MOV`, …); on a classic release `bw_read_metadata_tables` with `object_type="TRFN"` shows it the same way. Transformation names are UUID-like keys — use `bw_xref` on the target aDSO to find them.
 
 ### `bw_create_transformation`
-Create a new Transformation. Supports all source types (aDSO, InfoSource, DataSource/RSDS) and all target types (aDSO). For InfoObject (`IOBJ`) sources or targets, set `source_object_subtype` / `target_object_subtype` to select the facet — `TEXT` (text table), `ATTR` (attributes / master data), or `HIER` (hierarchy). Can copy structure from an existing Transformation.
+Create a new Transformation. Supports all source types (aDSO, InfoSource, DataSource/RSDS) and all target types (aDSO). For InfoObject (`IOBJ`) sources or targets, set `source_object_subtype` / `target_object_subtype` to select the facet — `TEXT` (text table), `ATTR` (attributes / master data), or `HIER` (hierarchy). Can copy structure from an existing Transformation. In a transportable package, `transport` records it on the given request; `activate: true` activates it in the same call, and the answer then carries the activation messages.
 
 ### `bw_update_transformation`
 Modify field mappings in an existing Transformation:
