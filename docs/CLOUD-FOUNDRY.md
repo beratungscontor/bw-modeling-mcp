@@ -165,6 +165,7 @@ KBA **3361376259** (propagation over HTTPS), **3367280** (401 / credential popup
 | `BW_CC_LOCATION_ID` | Cloud Connector location id, when several are connected |
 | `BW_PUBLIC_URL` | advertised URL behind a reverse proxy |
 | `BW_ALLOWED_ORIGINS` | CORS allowlist for browser-based MCP clients |
+| `BW_TRUST_PROXY_HOPS` | proxy hops trusted for the client address the OAuth rate limits key on; default `2` on Cloud Foundry (load balancer and CF router), `0` elsewhere. Raise it only for a further proxy that overwrites `X-Forwarded-For` — a value too high lets a client choose its own address |
 | `BW_MCP_SERVER_NAME` | server name in the MCP handshake (default `bw-modeling-mcp`); make it unique per instance |
 | `BW_MCP_SYSTEM_LABEL` | free-text system label (e.g. `AP4 (BW production, read-only)`) shown at the top of the server instructions |
 | `BW_PLATFORM` | `auto` (default), `classic`, `bw4` — platform detection for the tool surface; `classic` forces the classic verdict, `bw4` turns the filter off |

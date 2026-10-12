@@ -20,6 +20,7 @@ import { setupHttpAuth, loadXsuaaCredentials, resolveAppUrl } from '@arc-mcp/xsu
 import { createConnectivityProxy, parseVCAPServices } from '@arc-mcp/xsuaa-auth/btp';
 import { createServer } from './index.js';
 import { ensurePlatform } from './platform.js';
+import { trustedProxyHops } from './proxy-trust.js';
 import { runWithClient } from './request-context.js';
 import { SCOPES, hasScope } from './scopes.js';
 import {
@@ -70,10 +71,8 @@ async function main(): Promise<void> {
   const deps: DestinationDeps = { btpConfig, proxy, destinationName };
 
   const app = express();
-  // The OAuth endpoints rate-limit per req.ip. Behind the Cloud Foundry router that is the
-  // router's address unless the one hop in front is trusted, and every client then shares a
-  // single bucket. Trusting exactly one hop keeps a client from choosing its own key.
-  app.set('trust proxy', 1);
+  const proxyHops = trustedProxyHops(process.env);
+  if (proxyHops > 0) app.set('trust proxy', proxyHops);
   app.use(express.json({ limit: '4mb' }));
   app.use(express.urlencoded({ extended: true }));
 
