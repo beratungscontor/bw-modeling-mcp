@@ -1368,6 +1368,11 @@ export async function bwCreateQuery(
     throw new Error(`compexist did not return an ELEMUID header. Headers: ${JSON.stringify(existResult.headers)}`);
   }
 
+  // Both lookups may send requests of their own on this client; after the lock, a classic
+  // release ends the session holding it, and the create is refused with an invalid handle.
+  const masterSystem = await resolveMasterSystem(client);
+  const responsible  = await resolveLogonUser(client);
+
   // Step 3: Lock (CREA) on the primary client — the enqueue endpoint differs
   // from the generic /{type}/{name} lock, so client.lock() cannot be reused.
   const csrfToken = await client.getCsrfToken();
@@ -1398,8 +1403,6 @@ export async function bwCreateQuery(
   try {
     // Step 4: Build the create XML (see payloads/query_create.md).
     const language     = process.env.BW_LANGUAGE ?? 'DE';
-    const masterSystem = await resolveMasterSystem(client);
-    const responsible  = await resolveLogonUser(client);
     const timestamp    = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
     const descEsc      = escapeXml(description);
 
