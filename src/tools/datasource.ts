@@ -8,6 +8,7 @@ import {
   lockSessionHeader,
   decodeXmlEntities,
 } from '../bw-client.js';
+import { resolveLogonUser } from './logon_user.js';
 import { cachedPlatform } from '../platform.js';
 
 const BASE = '/sap/bw/modeling/repo/datasourcestructure';
@@ -746,7 +747,7 @@ export async function bwCreateDatasource(
 
   const language = process.env.BW_LANGUAGE ?? 'DE';
   const masterSystem = await resolveMasterSystem(client);
-  const responsible = (process.env.BW_USER ?? '').toUpperCase();
+  const responsible = await resolveLogonUser(client);
 
   const lockUrl   = `/sap/bw/modeling/rsds/${bwSeg(dsLower)}/${ssUpper}?action=lock`;
   const unlockUrl = `/sap/bw/modeling/rsds/${bwSeg(dsLower)}/${ssUpper}?action=unlock`;

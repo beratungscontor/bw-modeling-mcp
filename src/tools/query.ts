@@ -1,4 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
+import { resolveLogonUser } from './logon_user.js';
 import {
   BwClient,
   createClientFromEnv,
@@ -1398,7 +1399,7 @@ export async function bwCreateQuery(
     // Step 4: Build the create XML (see payloads/query_create.md).
     const language     = process.env.BW_LANGUAGE ?? 'DE';
     const masterSystem = await resolveMasterSystem(client);
-    const responsible  = (process.env.BW_USER ?? '').toUpperCase();
+    const responsible  = await resolveLogonUser(client);
     const timestamp    = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
     const descEsc      = escapeXml(description);
 

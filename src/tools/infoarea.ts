@@ -1,4 +1,5 @@
 import { BwClient, MEDIA_TYPES, bwSeg, decodeXmlEntities, stripInfoAreaSentinel } from '../bw-client.js';
+import { resolveLogonUser } from './logon_user.js';
 
 // ── bwMoveObject ──────────────────────────────────────────────────────────────
 
@@ -80,7 +81,7 @@ export async function bwCreateInfoArea(
   const parentUpper = args.parent_info_area?.toUpperCase() ?? '';
 
   const language = process.env.BW_LANGUAGE?.toUpperCase() ?? 'DE';
-  const user = process.env.BW_USER?.toUpperCase() ?? '';
+  const user = await resolveLogonUser(client);
 
   // Step 1: Lock with CREA (no parent_name / parent_type for InfoArea)
   const lockHandle = await client.lock('area', nameLower, {
@@ -107,7 +108,12 @@ export async function bwCreateInfoArea(
   </tlogoProperties>
 </InfoArea:infoArea>`;
 
-  await client.create('area', nameLower, lockHandle, xml, { 'Development-Class': pkg });
+  try {
+    await client.create('area', nameLower, lockHandle, xml, { 'Development-Class': pkg });
+  } catch (err) {
+    await client.unlock('area', nameLower).catch(() => {/* best effort */});
+    throw err;
+  }
   await client.unlock('area', nameLower);
 
   return JSON.stringify({

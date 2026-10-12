@@ -6,6 +6,7 @@ import {
   resolveMasterSystem,
   bwSeg,
 } from '../bw-client.js';
+import { resolveLogonUser } from './logon_user.js';
 import { parseInfoObjectProps } from './infoobject.js';
 import { parseActivationMessages, parseDtpsDeactivated, bwActivate } from './activation.js';
 
@@ -97,7 +98,7 @@ export async function bwCreateTransformation(
 
   const language     = process.env.BW_LANGUAGE ?? 'DE';
   const masterSystem = await resolveMasterSystem(client);
-  const responsible  = (process.env.BW_USER ?? '').toUpperCase();
+  const responsible  = await resolveLogonUser(client);
 
   // Step 2: Lock with CREA — exact Eclipse header set, no SAP session headers
   const csrfToken = await client.getCsrfToken();
@@ -152,25 +153,32 @@ export async function bwCreateTransformation(
   const createPath = `/sap/bw/modeling/trfn/${bwSeg(trfnLower)}?${corrNrParam}lockHandle=${lockHandle}${copyParams}`;
 
   // The create POST runs in a session of its own; the lock handle is session-independent.
-  const client2 = createClientFromEnv();
-  await client2.getCsrfToken();
-  await client2.postWithCsrf(
-    createPath,
-    postBody,
-    trfnAccept(),
-    { 'Development-Class': pkg },
-    true,
-  );
-
-  // Step 4: Verify persisted — through a fresh session so the check reflects the
-  // database, not the creating session's model buffer.
+  // A failed create must release the CREA lock: left behind, it blocks every further
+  // attempt on the same source and target until the session times out.
   try {
-    await freshReadInactive(trfnLower);
-  } catch {
-    throw new Error(
-      `Transformation '${trfnName}' was not persisted after creation ` +
-      `(GET /sap/bw/modeling/trfn/${trfnLower}/m returned 404).`
+    const client2 = createClientFromEnv();
+    await client2.getCsrfToken();
+    await client2.postWithCsrf(
+      createPath,
+      postBody,
+      trfnAccept(),
+      { 'Development-Class': pkg },
+      true,
     );
+
+    // Step 4: Verify persisted — through a fresh session so the check reflects the
+    // database, not the creating session's model buffer.
+    try {
+      await freshReadInactive(trfnLower);
+    } catch {
+      throw new Error(
+        `Transformation '${trfnName}' was not persisted after creation ` +
+        `(GET /sap/bw/modeling/trfn/${trfnLower}/m returned 404).`
+      );
+    }
+  } catch (err) {
+    await client.unlock('trfn', trfnLower).catch(() => {/* best effort */});
+    throw err;
   }
 
   const created = {

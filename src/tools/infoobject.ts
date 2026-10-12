@@ -1,4 +1,5 @@
 import { BwClient, MEDIA_TYPES, createClientFromEnv, freshRead, bwSeg } from '../bw-client.js';
+import { resolveLogonUser } from './logon_user.js';
 import { cachedPlatform } from '../platform.js';
 
 /**
@@ -139,6 +140,7 @@ export async function bwCreateInfoObject(
   if (isobjType === 'KYF' && args.lower_case !== undefined) {
     throw new Error('lower_case applies to Characteristics (CHA) only — remove it for a Key Figure.');
   }
+  const responsible = await resolveLogonUser(client);
 
   // Step 1: Lock with CREA headers (stateful_enqueue session)
   const lockHandle = await client.lock('iobj', nameLower, {
@@ -147,270 +149,277 @@ export async function bwCreateInfoObject(
     parent_type: 'AREA',
   }, 'stateful_enqueue');
 
-  // ── KYF: POST body accepted — fixedUnit/fixedCurrency via GET+PUT ────────────
-  if (isobjType === 'KYF') {
-    const ost = (args.object_specific_data_type ?? 'DEC').toUpperCase();
-    const mapped = KYF_TYPE_MAP[ost];
-    const keyfigureType = mapped?.keyfigureType ?? ost;
-    const semantics = mapped?.semantics ?? ost;
-    const aggregationType = (args.aggregation_type ?? 'SUM').toUpperCase();
+  // A failed step must not leave the CREA lock behind; on success a characteristic keeps it
+  // for bw_activate, as before.
+  try {
+    // ── KYF: POST body accepted — fixedUnit/fixedCurrency via GET+PUT ────────────
+    if (isobjType === 'KYF') {
+      const ost = (args.object_specific_data_type ?? 'DEC').toUpperCase();
+      const mapped = KYF_TYPE_MAP[ost];
+      const keyfigureType = mapped?.keyfigureType ?? ost;
+      const semantics = mapped?.semantics ?? ost;
+      const aggregationType = (args.aggregation_type ?? 'SUM').toUpperCase();
 
-    // SAP ignores fixedUnit/fixedCurrency in the POST body — omit them here
-    const language = process.env.BW_LANGUAGE ?? 'DE';
-    const kyfXml = `<?xml version="1.0" encoding="UTF-8"?>
-<InfoObject:infoObject
-  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xmlns:InfoObject="http://www.sap.com/bw/modeling/BwIobj.ecore"
-  xmlns:adtcore="http://www.sap.com/adt/core"
-  xsi:type="InfoObject:Keyfigure"
-  name="${nameUpper}"
-  shortDescriptionSet="false"
-  keyFigureSemantic="_"
-  keyfigureType="${keyfigureType}"
-  objectSpecificDataType="${ost}">
-  <infoObjectType>KYF</infoObjectType>
-  <dataElement/>
-  <longDescription>${desc}</longDescription>
-  <shortDescription>${desc}</shortDescription>
-  <tlogoProperties adtcore:language="${language}" adtcore:name="${nameUpper}" adtcore:type="IOBJ"
-    adtcore:masterLanguage="${language}" adtcore:responsible="${process.env.BW_USER}">
-    <infoArea>${infoArea}</infoArea>
-  </tlogoProperties>
-  <referencedInfoObject/>
-  <semantics>${semantics}</semantics>
-  <aggregationType>${aggregationType}</aggregationType>
-  <exceptionAggregation>
-    <referencedCharacteristic/>
-  </exceptionAggregation>
-  <displayProperties/>
-  <inventoryContext/>
-  <elimination/>
-  <stockCoverageProperties calculationType="B">
-    <referencedStockKeyfigure/>
-    <referencedDemandKeyfigure/>
-    <timeGranularityOfStockCoverage/>
-  </stockCoverageProperties>
-</InfoObject:infoObject>`;
+      // SAP ignores fixedUnit/fixedCurrency in the POST body — omit them here
+      const language = process.env.BW_LANGUAGE ?? 'DE';
+      const kyfXml = `<?xml version="1.0" encoding="UTF-8"?>
+  <InfoObject:infoObject
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:InfoObject="http://www.sap.com/bw/modeling/BwIobj.ecore"
+    xmlns:adtcore="http://www.sap.com/adt/core"
+    xsi:type="InfoObject:Keyfigure"
+    name="${nameUpper}"
+    shortDescriptionSet="false"
+    keyFigureSemantic="_"
+    keyfigureType="${keyfigureType}"
+    objectSpecificDataType="${ost}">
+    <infoObjectType>KYF</infoObjectType>
+    <dataElement/>
+    <longDescription>${desc}</longDescription>
+    <shortDescription>${desc}</shortDescription>
+    <tlogoProperties adtcore:language="${language}" adtcore:name="${nameUpper}" adtcore:type="IOBJ"
+      adtcore:masterLanguage="${language}" adtcore:responsible="${responsible}">
+      <infoArea>${infoArea}</infoArea>
+    </tlogoProperties>
+    <referencedInfoObject/>
+    <semantics>${semantics}</semantics>
+    <aggregationType>${aggregationType}</aggregationType>
+    <exceptionAggregation>
+      <referencedCharacteristic/>
+    </exceptionAggregation>
+    <displayProperties/>
+    <inventoryContext/>
+    <elimination/>
+    <stockCoverageProperties calculationType="B">
+      <referencedStockKeyfigure/>
+      <referencedDemandKeyfigure/>
+      <timeGranularityOfStockCoverage/>
+    </stockCoverageProperties>
+  </InfoObject:infoObject>`;
 
-    await client.create('iobj', nameLower, lockHandle, kyfXml, { 'Development-Class': pkg });
-    await client.unlock('iobj', nameLower);
-
-    // fixedUnit / fixedCurrency: SAP only accepts these via PUT after creation
-    if (args.fixed_unit || args.fixed_currency) {
-      const freshClient = createClientFromEnv();
-      const getResult = await freshClient.get(`/sap/bw/modeling/iobj/${bwSeg(nameLower)}/m`, MEDIA_TYPES['iobj']);
-      const timestamp = getResult.headers['timestamp'] ?? getResult.headers['TIMESTAMP'];
-      let xml = getResult.body;
-
-      const putLockHandle = await client.lock('iobj', nameLower, undefined, 'stateful_enqueue');
-
-      if (args.fixed_unit) {
-        const unit = args.fixed_unit.toUpperCase();
-        xml = xml.replace('<unitCurrencyInfoObjectRef', `<fixedUnit>${unit}</fixedUnit><unitCurrencyInfoObjectRef`);
-      }
-      if (args.fixed_currency) {
-        const cur = args.fixed_currency.toUpperCase();
-        xml = xml.replace('<unitCurrencyInfoObjectRef', `<fixedCurrency>${cur}</fixedCurrency><unitCurrencyInfoObjectRef`);
-      }
-
-      await freshClient.put('iobj', nameLower, putLockHandle, xml, timestamp, args.transport);
+      await client.create('iobj', nameLower, lockHandle, kyfXml, { 'Development-Class': pkg });
       await client.unlock('iobj', nameLower);
+
+      // fixedUnit / fixedCurrency: SAP only accepts these via PUT after creation
+      if (args.fixed_unit || args.fixed_currency) {
+        const freshClient = createClientFromEnv();
+        const getResult = await freshClient.get(`/sap/bw/modeling/iobj/${bwSeg(nameLower)}/m`, MEDIA_TYPES['iobj']);
+        const timestamp = getResult.headers['timestamp'] ?? getResult.headers['TIMESTAMP'];
+        let xml = getResult.body;
+
+        const putLockHandle = await client.lock('iobj', nameLower, undefined, 'stateful_enqueue');
+
+        if (args.fixed_unit) {
+          const unit = args.fixed_unit.toUpperCase();
+          xml = xml.replace('<unitCurrencyInfoObjectRef', `<fixedUnit>${unit}</fixedUnit><unitCurrencyInfoObjectRef`);
+        }
+        if (args.fixed_currency) {
+          const cur = args.fixed_currency.toUpperCase();
+          xml = xml.replace('<unitCurrencyInfoObjectRef', `<fixedCurrency>${cur}</fixedCurrency><unitCurrencyInfoObjectRef`);
+        }
+
+        await freshClient.put('iobj', nameLower, putLockHandle, xml, timestamp, args.transport);
+        await client.unlock('iobj', nameLower);
+      }
+
+      const kyfResult: Record<string, unknown> = {
+        success: true,
+        infoobjectType: 'KYF',
+        name: nameUpper,
+        infoArea: args.info_area,
+        description: desc,
+        package: pkg,
+        lockHandle: '',
+        objectSpecificDataType: ost,
+        keyfigureType,
+        semantics,
+        aggregationType,
+      };
+      if (args.fixed_unit) kyfResult['fixedUnit'] = args.fixed_unit.toUpperCase();
+      if (args.fixed_currency) kyfResult['fixedCurrency'] = args.fixed_currency.toUpperCase();
+      kyfResult['message'] = `InfoObject '${nameUpper}' created (inactive). Call bw_activate with lock_handle="" to activate.`;
+
+      return JSON.stringify(kyfResult);
     }
 
-    const kyfResult: Record<string, unknown> = {
+    // ── CHA: POST body ignored — GET + PUT required ────────────────────────────
+
+    // Step 2: Create-POST — API ignores body, creates object with defaults
+    //
+    // Except on a classic release, which reads it: there the minimal body is rejected
+    // outright ("the object name must not be empty"), because nothing can be derived from
+    // it. The wizard in Eclipse BWMT posts the whole object on 7.5, so this does too — the
+    // GET and PUT below still run and apply everything this body does not carry.
+    const minimalXml = `<?xml version="1.0" encoding="UTF-8"?><iobj:infoObject xmlns:iobj="http://www.sap.com/bw/modeling/BwIobj.ecore" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="iobj:Characteristic" name="${nameUpper}"/>`;
+    const createXml = cachedPlatform()?.platform === 'classic'
+      ? characteristicCreateXml({
+          name: nameUpper,
+          infoArea,
+          description: desc,
+          dataType: (args.data_type ?? 'CHAR').toUpperCase(),
+          length: args.length ?? 10,
+          conversionRoutine: args.conversion_routine
+            ?? (((args.data_type ?? 'CHAR').toUpperCase() === 'CHAR' || (args.data_type ?? 'CHAR').toUpperCase() === 'NUMC') ? 'ALPHA' : ''),
+          withMasterData: args.with_master_data ?? false,
+          withTexts: args.with_texts ?? false,
+          language: process.env.BW_LANGUAGE ?? 'DE',
+          responsible,
+        })
+      : minimalXml;
+    await client.create('iobj', nameLower, lockHandle, createXml, { 'Development-Class': pkg });
+
+    // Step 3: GET server-created object (defaults) to obtain enriched XML + timestamp
+    const getResult = await client.get(`/sap/bw/modeling/iobj/${bwSeg(nameLower)}/m`, MEDIA_TYPES['iobj']);
+    const timestamp = getResult.headers['timestamp'] ?? getResult.headers['TIMESTAMP'];
+
+    // Step 4: Lock again (stateful_enqueue) — same session, server returns same lockHandle
+    await client.lock('iobj', nameLower, undefined, 'stateful_enqueue');
+
+    // Step 5: Build PUT body — substitute desired values into the GET response
+    let putXml = getResult.body;
+
+    // Remove fieldName attribute — it tells SAP the DDIC field already exists with the old
+    // type/length, causing SAP to ignore dataType/length changes in the PUT body.
+    putXml = putXml.replace(/\s+fieldName="[^"]*"/, '');
+    // Normalise masterDataAccess — GET returns type="GEN" but PUT expects explicit empty attrs
+    putXml = putXml.replace(/<masterDataAccess[^/]*\/>/, '<masterDataAccess readClass="" sapHanaPackage="" sapHanaView=""/>');
+
+    const chaDataType = (args.data_type ?? 'CHAR').toUpperCase();
+    const chaLength = args.length ?? 10;
+    const defaultConv = (chaDataType === 'CHAR' || chaDataType === 'NUMC') ? 'ALPHA' : '';
+    const chaConv = args.conversion_routine ?? defaultConv;
+    const withMasterData = args.with_master_data ?? false;
+    const withTexts = args.with_texts ?? false;
+    const lowerCase = args.lower_case ?? false;
+
+    // Root element attributes
+    putXml = putXml.replace(/\bobjectSpecificDataType="[^"]*"/, `objectSpecificDataType="${chaDataType}"`);
+    putXml = putXml.replace(/\boutputLength="[^"]*"/, `outputLength="${chaLength}"`);
+    if (/\bconversionRoutine="/.test(putXml)) {
+      putXml = putXml.replace(/\bconversionRoutine="[^"]*"/, `conversionRoutine="${chaConv}"`);
+    } else if (chaConv) {
+      // Add conversionRoutine attribute to root element if not present
+      putXml = putXml.replace(/(<iobj:infoObject\b)/, `$1 conversionRoutine="${chaConv}"`);
+    }
+    putXml = setLowerCase(putXml, lowerCase);
+    // CHA child elements
+    putXml = putXml.replace(/<dataType>[^<]*<\/dataType>/, `<dataType>${chaDataType}</dataType>`);
+    putXml = putXml.replace(/<length>[^<]*<\/length>/, `<length>${chaLength}</length>`);
+
+    // masterDataProperties — GET response has NO withMasterData attribute; PUT must add it
+    putXml = putXml.replace(
+      /<masterDataProperties(\s[^>]*)?>/,
+      `<masterDataProperties withMasterData="${withMasterData}">`
+    );
+
+    // textProperties — set withTexts / shortTextAvailable / languageDependentTextAvailable
+    if (withTexts) {
+      putXml = putXml.replace(
+        /<textProperties(\s[^>]*)?>/,
+        `<textProperties shortTextAvailable="true" withTexts="true">`
+      );
+    } else {
+      putXml = putXml.replace(
+        /<textProperties(\s[^>]*)?>/,
+        `<textProperties languageDependentTextAvailable="false" shortTextAvailable="false" withTexts="false">`
+      );
+    }
+
+    // Common substitutions — descriptions, InfoArea, texts element, hana mapping
+    // SAP XML texts use 1-letter language codes (D, E, F…); BW_LANGUAGE may be ISO (DE, EN…)
+    const ISO_TO_SAP: Record<string, string> = {
+      DE: 'D', EN: 'E', FR: 'F', IT: 'I', ES: 'S', NL: 'N', PT: 'P',
+      RU: 'R', JA: 'J', KO: 'K', ZH: '1', PL: 'L', CS: 'C',
+    };
+    const bwLangRaw = process.env.BW_LANGUAGE;
+    const bwLangSap = bwLangRaw
+      ? (ISO_TO_SAP[bwLangRaw.toUpperCase()] ?? bwLangRaw)
+      : undefined;
+    putXml = putXml.replace(/<longDescription>[^<]*<\/longDescription>/, `<longDescription>${desc}</longDescription>`);
+    putXml = putXml.replace(/<shortDescription>[^<]*<\/shortDescription>/, `<shortDescription>${desc}</shortDescription>`);
+    putXml = putXml.replace(/(<texts\b[^/]*?)longText="[^"]*"/, `$1longText="${desc}"`);
+    putXml = putXml.replace(/(<texts\b[^/]*?)shortText="[^"]*"/, `$1shortText="${desc}"`);
+    if (bwLangSap) {
+      putXml = putXml.replace(/(<texts\b[^/]*?)language="[^"]*"/, `$1language="${bwLangSap}"`);
+    }
+    putXml = putXml.replace(/\badtcore:description="[^"]*"/, `adtcore:description="${desc}"`);
+    putXml = putXml.replace(/<infoArea>[^<]*<\/infoArea>/, `<infoArea>${infoArea}</infoArea>`);
+    putXml = putXml.replace(/(<sourceField\b[^/]*?)\bdescription="[^"]*"/, `$1description="${desc}"`);
+    putXml = putXml.replace(/(<sourceField\b[^/]*?)\bshortDescription="[^"]*"/, `$1shortDescription="${desc}"`);
+
+    // Step 6: Insert compoundParent elements if compound_infoobjects is provided (CHA only)
+    if (args.compound_infoobjects && args.compound_infoobjects.length > 0) {
+      const freshClient = createClientFromEnv();
+      const compoundParentElements: string[] = [];
+      for (const parent of args.compound_infoobjects) {
+        const parentLower = parent.toLowerCase();
+        const parentUpper = parent.toUpperCase();
+        const parentGet = await freshClient.get(`/sap/bw/modeling/iobj/${bwSeg(parentLower)}/a`, MEDIA_TYPES['iobj']);
+        const parentXml = parentGet.body;
+        const parentProps = parseInfoObjectProps(parentXml);
+        const parentLongDescMatch = parentXml.match(/<longDescription>([^<]+)<\/longDescription>/);
+        const parentDescription = parentLongDescMatch?.[1] ?? parentProps.label;
+        compoundParentElements.push(
+          `<compoundParent` +
+          ` description="${parentDescription}"` +
+          ` infoObjectType="CHA"` +
+          ` name="${parentUpper}"` +
+          ` ref="../../${parentLower}/a/model.iobj#//"` +
+          ` dataType="${parentProps.dataType}"` +
+          ` length="${parentProps.length}">` +
+          `<referencedCharacteristic xsi:type="iobj:ReferencedInfoObject" description=""/>` +
+          `</compoundParent>`
+        );
+      }
+      const compoundParentXml = compoundParentElements.join('\n') + '\n';
+      const insertionPoints = [
+        '<externalSAPHANAView',
+        '<runtimeProperties',
+        '<sidTable',
+        '</iobj:infoObject>',
+      ];
+      let inserted = false;
+      for (const point of insertionPoints) {
+        if (putXml.includes(point)) {
+          putXml = putXml.replace(point, compoundParentXml + point);
+          inserted = true;
+          break;
+        }
+      }
+      if (!inserted) {
+        throw new Error('Could not find insertion point for compoundParent elements in PUT XML');
+      }
+    }
+
+    // Step 7: PUT — applies the correct values
+    await client.put('iobj', nameLower, lockHandle, putXml, timestamp, args.transport);
+
+    const resultExtra: Record<string, unknown> = {
+      dataType: chaDataType,
+      length: chaLength,
+      conversionRoutine: chaConv,
+      withMasterData,
+      withTexts,
+      lowerCase,
+    };
+    if (args.referenced_infoobject) resultExtra['referencedInfoObject'] = args.referenced_infoobject.toUpperCase();
+    if (args.compound_infoobjects?.length) resultExtra['compoundParents'] = args.compound_infoobjects.map(p => p.toUpperCase());
+
+    return JSON.stringify({
       success: true,
-      infoobjectType: 'KYF',
+      infoobjectType: 'CHA',
       name: nameUpper,
       infoArea: args.info_area,
       description: desc,
       package: pkg,
-      lockHandle: '',
-      objectSpecificDataType: ost,
-      keyfigureType,
-      semantics,
-      aggregationType,
-    };
-    if (args.fixed_unit) kyfResult['fixedUnit'] = args.fixed_unit.toUpperCase();
-    if (args.fixed_currency) kyfResult['fixedCurrency'] = args.fixed_currency.toUpperCase();
-    kyfResult['message'] = `InfoObject '${nameUpper}' created (inactive). Call bw_activate with lock_handle="" to activate.`;
-
-    return JSON.stringify(kyfResult);
+      lockHandle,
+      ...resultExtra,
+      message: `InfoObject '${nameUpper}' created (inactive). Call bw_activate with lock_handle="${lockHandle}" to activate.`,
+    });
+  } catch (err) {
+    await client.unlock('iobj', nameLower).catch(() => {/* best effort */});
+    throw err;
   }
-
-  // ── CHA: POST body ignored — GET + PUT required ────────────────────────────
-
-  // Step 2: Create-POST — API ignores body, creates object with defaults
-  //
-  // Except on a classic release, which reads it: there the minimal body is rejected
-  // outright ("the object name must not be empty"), because nothing can be derived from
-  // it. The wizard in Eclipse BWMT posts the whole object on 7.5, so this does too — the
-  // GET and PUT below still run and apply everything this body does not carry.
-  const minimalXml = `<?xml version="1.0" encoding="UTF-8"?><iobj:infoObject xmlns:iobj="http://www.sap.com/bw/modeling/BwIobj.ecore" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="iobj:Characteristic" name="${nameUpper}"/>`;
-  const createXml = cachedPlatform()?.platform === 'classic'
-    ? characteristicCreateXml({
-        name: nameUpper,
-        infoArea,
-        description: desc,
-        dataType: (args.data_type ?? 'CHAR').toUpperCase(),
-        length: args.length ?? 10,
-        conversionRoutine: args.conversion_routine
-          ?? (((args.data_type ?? 'CHAR').toUpperCase() === 'CHAR' || (args.data_type ?? 'CHAR').toUpperCase() === 'NUMC') ? 'ALPHA' : ''),
-        withMasterData: args.with_master_data ?? false,
-        withTexts: args.with_texts ?? false,
-        language: process.env.BW_LANGUAGE ?? 'DE',
-        responsible: (process.env.BW_USER ?? '').toUpperCase(),
-      })
-    : minimalXml;
-  await client.create('iobj', nameLower, lockHandle, createXml, { 'Development-Class': pkg });
-
-  // Step 3: GET server-created object (defaults) to obtain enriched XML + timestamp
-  const getResult = await client.get(`/sap/bw/modeling/iobj/${bwSeg(nameLower)}/m`, MEDIA_TYPES['iobj']);
-  const timestamp = getResult.headers['timestamp'] ?? getResult.headers['TIMESTAMP'];
-
-  // Step 4: Lock again (stateful_enqueue) — same session, server returns same lockHandle
-  await client.lock('iobj', nameLower, undefined, 'stateful_enqueue');
-
-  // Step 5: Build PUT body — substitute desired values into the GET response
-  let putXml = getResult.body;
-
-  // Remove fieldName attribute — it tells SAP the DDIC field already exists with the old
-  // type/length, causing SAP to ignore dataType/length changes in the PUT body.
-  putXml = putXml.replace(/\s+fieldName="[^"]*"/, '');
-  // Normalise masterDataAccess — GET returns type="GEN" but PUT expects explicit empty attrs
-  putXml = putXml.replace(/<masterDataAccess[^/]*\/>/, '<masterDataAccess readClass="" sapHanaPackage="" sapHanaView=""/>');
-
-  const chaDataType = (args.data_type ?? 'CHAR').toUpperCase();
-  const chaLength = args.length ?? 10;
-  const defaultConv = (chaDataType === 'CHAR' || chaDataType === 'NUMC') ? 'ALPHA' : '';
-  const chaConv = args.conversion_routine ?? defaultConv;
-  const withMasterData = args.with_master_data ?? false;
-  const withTexts = args.with_texts ?? false;
-  const lowerCase = args.lower_case ?? false;
-
-  // Root element attributes
-  putXml = putXml.replace(/\bobjectSpecificDataType="[^"]*"/, `objectSpecificDataType="${chaDataType}"`);
-  putXml = putXml.replace(/\boutputLength="[^"]*"/, `outputLength="${chaLength}"`);
-  if (/\bconversionRoutine="/.test(putXml)) {
-    putXml = putXml.replace(/\bconversionRoutine="[^"]*"/, `conversionRoutine="${chaConv}"`);
-  } else if (chaConv) {
-    // Add conversionRoutine attribute to root element if not present
-    putXml = putXml.replace(/(<iobj:infoObject\b)/, `$1 conversionRoutine="${chaConv}"`);
-  }
-  putXml = setLowerCase(putXml, lowerCase);
-  // CHA child elements
-  putXml = putXml.replace(/<dataType>[^<]*<\/dataType>/, `<dataType>${chaDataType}</dataType>`);
-  putXml = putXml.replace(/<length>[^<]*<\/length>/, `<length>${chaLength}</length>`);
-
-  // masterDataProperties — GET response has NO withMasterData attribute; PUT must add it
-  putXml = putXml.replace(
-    /<masterDataProperties(\s[^>]*)?>/,
-    `<masterDataProperties withMasterData="${withMasterData}">`
-  );
-
-  // textProperties — set withTexts / shortTextAvailable / languageDependentTextAvailable
-  if (withTexts) {
-    putXml = putXml.replace(
-      /<textProperties(\s[^>]*)?>/,
-      `<textProperties shortTextAvailable="true" withTexts="true">`
-    );
-  } else {
-    putXml = putXml.replace(
-      /<textProperties(\s[^>]*)?>/,
-      `<textProperties languageDependentTextAvailable="false" shortTextAvailable="false" withTexts="false">`
-    );
-  }
-
-  // Common substitutions — descriptions, InfoArea, texts element, hana mapping
-  // SAP XML texts use 1-letter language codes (D, E, F…); BW_LANGUAGE may be ISO (DE, EN…)
-  const ISO_TO_SAP: Record<string, string> = {
-    DE: 'D', EN: 'E', FR: 'F', IT: 'I', ES: 'S', NL: 'N', PT: 'P',
-    RU: 'R', JA: 'J', KO: 'K', ZH: '1', PL: 'L', CS: 'C',
-  };
-  const bwLangRaw = process.env.BW_LANGUAGE;
-  const bwLangSap = bwLangRaw
-    ? (ISO_TO_SAP[bwLangRaw.toUpperCase()] ?? bwLangRaw)
-    : undefined;
-  putXml = putXml.replace(/<longDescription>[^<]*<\/longDescription>/, `<longDescription>${desc}</longDescription>`);
-  putXml = putXml.replace(/<shortDescription>[^<]*<\/shortDescription>/, `<shortDescription>${desc}</shortDescription>`);
-  putXml = putXml.replace(/(<texts\b[^/]*?)longText="[^"]*"/, `$1longText="${desc}"`);
-  putXml = putXml.replace(/(<texts\b[^/]*?)shortText="[^"]*"/, `$1shortText="${desc}"`);
-  if (bwLangSap) {
-    putXml = putXml.replace(/(<texts\b[^/]*?)language="[^"]*"/, `$1language="${bwLangSap}"`);
-  }
-  putXml = putXml.replace(/\badtcore:description="[^"]*"/, `adtcore:description="${desc}"`);
-  putXml = putXml.replace(/<infoArea>[^<]*<\/infoArea>/, `<infoArea>${infoArea}</infoArea>`);
-  putXml = putXml.replace(/(<sourceField\b[^/]*?)\bdescription="[^"]*"/, `$1description="${desc}"`);
-  putXml = putXml.replace(/(<sourceField\b[^/]*?)\bshortDescription="[^"]*"/, `$1shortDescription="${desc}"`);
-
-  // Step 6: Insert compoundParent elements if compound_infoobjects is provided (CHA only)
-  if (args.compound_infoobjects && args.compound_infoobjects.length > 0) {
-    const freshClient = createClientFromEnv();
-    const compoundParentElements: string[] = [];
-    for (const parent of args.compound_infoobjects) {
-      const parentLower = parent.toLowerCase();
-      const parentUpper = parent.toUpperCase();
-      const parentGet = await freshClient.get(`/sap/bw/modeling/iobj/${bwSeg(parentLower)}/a`, MEDIA_TYPES['iobj']);
-      const parentXml = parentGet.body;
-      const parentProps = parseInfoObjectProps(parentXml);
-      const parentLongDescMatch = parentXml.match(/<longDescription>([^<]+)<\/longDescription>/);
-      const parentDescription = parentLongDescMatch?.[1] ?? parentProps.label;
-      compoundParentElements.push(
-        `<compoundParent` +
-        ` description="${parentDescription}"` +
-        ` infoObjectType="CHA"` +
-        ` name="${parentUpper}"` +
-        ` ref="../../${parentLower}/a/model.iobj#//"` +
-        ` dataType="${parentProps.dataType}"` +
-        ` length="${parentProps.length}">` +
-        `<referencedCharacteristic xsi:type="iobj:ReferencedInfoObject" description=""/>` +
-        `</compoundParent>`
-      );
-    }
-    const compoundParentXml = compoundParentElements.join('\n') + '\n';
-    const insertionPoints = [
-      '<externalSAPHANAView',
-      '<runtimeProperties',
-      '<sidTable',
-      '</iobj:infoObject>',
-    ];
-    let inserted = false;
-    for (const point of insertionPoints) {
-      if (putXml.includes(point)) {
-        putXml = putXml.replace(point, compoundParentXml + point);
-        inserted = true;
-        break;
-      }
-    }
-    if (!inserted) {
-      throw new Error('Could not find insertion point for compoundParent elements in PUT XML');
-    }
-  }
-
-  // Step 7: PUT — applies the correct values
-  await client.put('iobj', nameLower, lockHandle, putXml, timestamp, args.transport);
-
-  const resultExtra: Record<string, unknown> = {
-    dataType: chaDataType,
-    length: chaLength,
-    conversionRoutine: chaConv,
-    withMasterData,
-    withTexts,
-    lowerCase,
-  };
-  if (args.referenced_infoobject) resultExtra['referencedInfoObject'] = args.referenced_infoobject.toUpperCase();
-  if (args.compound_infoobjects?.length) resultExtra['compoundParents'] = args.compound_infoobjects.map(p => p.toUpperCase());
-
-  return JSON.stringify({
-    success: true,
-    infoobjectType: 'CHA',
-    name: nameUpper,
-    infoArea: args.info_area,
-    description: desc,
-    package: pkg,
-    lockHandle,
-    ...resultExtra,
-    message: `InfoObject '${nameUpper}' created (inactive). Call bw_activate with lock_handle="${lockHandle}" to activate.`,
-  });
 }
 
 // ── InfoObject props (used by adso/transformation tools) ─────────────────────

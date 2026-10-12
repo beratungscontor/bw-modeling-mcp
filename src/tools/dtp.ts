@@ -7,6 +7,7 @@ import {
   bwSeg,
   bwSegUpper,
 } from '../bw-client.js';
+import { resolveLogonUser } from './logon_user.js';
 import { bwActivate } from './activation.js';
 
 interface XrefEntry {
@@ -757,7 +758,7 @@ export async function bwCreateDtp(
 
   const language     = process.env.BW_LANGUAGE ?? 'DE';
   const masterSystem = await resolveMasterSystem(client);
-  const responsible  = (process.env.BW_USER ?? '').toUpperCase();
+  const responsible  = await resolveLogonUser(client);
 
   // Step 1: Generate DTP name via POST generateDtpId — DTP name is in Location header
   const csrfToken = await client.getCsrfToken();

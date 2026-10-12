@@ -1,4 +1,5 @@
 import { BwClient, createClientFromEnv, bwSeg, lockSessionHeader, resolveMasterSystem } from '../bw-client.js';
+import { resolveLogonUser } from './logon_user.js';
 import { rkfAccept, rkfWriteMediaType, QUERY_ACCEPT_LIST, queryWriteMediaType } from './query.js';
 import { recordedIn } from './elem_write.js';
 
@@ -178,7 +179,7 @@ export async function bwCreateRkf(client: BwClient, args: CreateRkfArgs): Promis
 
   const language = process.env.BW_LANGUAGE ?? 'DE';
   const masterSystem = await resolveMasterSystem(client);
-  const responsible = (process.env.BW_USER ?? '').toUpperCase();
+  const responsible = await resolveLogonUser(client);
   const timestampIso = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
   const descEsc = escapeXml(args.description);
 

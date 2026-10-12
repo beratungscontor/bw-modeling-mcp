@@ -1,4 +1,5 @@
 import { BwClient, createClientFromEnv, bwSeg, lockSessionHeader, resolveMasterSystem } from '../bw-client.js';
+import { resolveLogonUser } from './logon_user.js';
 import { queryTable } from './metadata_sql.js';
 import {
   QUERY_ACCEPT_LIST,
@@ -291,7 +292,7 @@ export async function bwCreateVariable(
       : '';
   const language = args.master_language?.toUpperCase() ?? process.env.BW_LANGUAGE?.toUpperCase() ?? 'EN';
   const masterSystem = await resolveMasterSystem(client);
-  const responsible = (process.env.BW_USER ?? '').toUpperCase();
+  const responsible = await resolveLogonUser(client);
   const timestampIso = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
   const descEsc = escapeXml(args.description);
 

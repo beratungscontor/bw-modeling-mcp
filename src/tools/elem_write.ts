@@ -1,4 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
+import { resolveLogonUser } from './logon_user.js';
 import { BwClient, createClientFromEnv, bwSeg, lockSessionHeader, resolveMasterSystem } from '../bw-client.js';
 import {
   ckfAccept,
@@ -436,7 +437,7 @@ export async function bwCreateCkf(client: BwClient, args: CreateCkfArgs): Promis
 
   const language = process.env.BW_LANGUAGE ?? 'DE';
   const masterSystem = await resolveMasterSystem(client);
-  const responsible = (process.env.BW_USER ?? '').toUpperCase();
+  const responsible = await resolveLogonUser(client);
   const timestampIso = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
   const descEsc = escapeXml(args.description);
 
@@ -1458,7 +1459,7 @@ export async function bwCreateStructure(client: BwClient, args: CreateStructureA
 
   const language = process.env.BW_LANGUAGE ?? 'DE';
   const masterSystem = await resolveMasterSystem(client);
-  const responsible = (process.env.BW_USER ?? '').toUpperCase();
+  const responsible = await resolveLogonUser(client);
   const timestampIso = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
   const descEsc = escapeXml(args.description);
 
