@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- **A transformation could not be created behind a BTP destination** — the create tools wrote the user from `BW_USER` as the object's responsible, and behind a destination, with principal propagation or a technical user, that variable is unset. A transformation with an empty responsible is refused with "model deserialization failed"; other object types accepted it, which is why only some creates failed. The user is now read from the system itself when `BW_USER` is not set, for every create tool.
+- **A failed create left its lock behind** — when the create of a transformation, an InfoObject or an InfoArea failed after the lock was taken, the lock stayed until the session timed out, and every further attempt on the same object was refused as locked. It is now released whenever the create fails.
 - **The master system of new query components came from the URL host** — `bw_create_rkf`, `bw_create_ckf`, `bw_create_structure` and `bw_create_variable` derived it from the host name in `BW_URL`, which says nothing about the system behind a destination or a proxy. They now read the system's logical system name, as the other create tools do. Reported in #34.
 - **Behind Cloud Foundry all clients shared one rate limit** — the OAuth endpoints limit requests per client address, and on SAP BTP that address was the load balancer in front of the app, so one busy client could lock every other user out of the login for an hour. The server now trusts the two proxy hops in front of the app on Cloud Foundry and none elsewhere; `BW_TRUST_PROXY_HOPS` overrides that. Reported in #35.
 
