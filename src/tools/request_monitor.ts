@@ -1,4 +1,8 @@
 import { BwClient, createClientFromEnv } from '../bw-client.js';
+import {
+  NodeLog, dtpRequestInstance, findChainRunOfRequest, formatLongText, formatNodeLogs,
+  parseLongText, readChainNodeLogs,
+} from './sap_messages.js';
 
 // Every GET in the runtime manage family returns HTTP 415 unless it carries
 // Content-Type: application/json, even though GET has no body.
@@ -90,6 +94,10 @@ async function getProcessStatusMap(client: BwClient): Promise<Map<string, string
     processStatusMap = await fetchDomainMap(client, 'rspm_process_status');
   }
   return processStatusMap;
+}
+
+function isErrorSeverity(severity: string | undefined): boolean {
+  return /^(e|a|x|error|abort)/i.test(severity ?? '');
 }
 
 function decodeStatus(map: Map<string, string>, code: string | undefined): string {
@@ -210,6 +218,30 @@ export async function bwGetRequest(
     };
   });
 
+  // The request log above holds the request-level messages only. The messages of the data
+  // packages — where a failed transformation reports its error — are kept in a compressed
+  // log that no API returns as such; the one place they come out structured is the step log
+  // of the process chain run that executed the request. Read only for a request that did not
+  // finish green, since it costs a table read and two further calls.
+  const header = headerRes.status === 'fulfilled'
+    ? JSON.parse(headerRes.value.body) as RequestListItem
+    : undefined;
+  const finishedGreen = header?.requestStatus?.startsWith('G') ?? false;
+  let chainLog: { logId?: string; logs: NodeLog[]; note?: string } | undefined;
+  if (!finishedGreen) {
+    try {
+      const logId = await findChainRunOfRequest(client, requestTsn);
+      chainLog = logId
+        ? { logId, logs: await readChainNodeLogs(client, logId, dtpRequestInstance(requestTsn)) }
+        : { logs: [], note: 'no process chain run executed this request' };
+    } catch (err) {
+      chainLog = { logs: [], note: `chain log not readable: ${String((err as Error).message).split('\n')[0]}` };
+    }
+    if (chainLog.logId && chainLog.logs.length === 0) {
+      chainLog.note = `chain run ${chainLog.logId} has no step for this request`;
+    }
+  }
+
   if (format === 'raw') {
     return JSON.stringify({
       header: headerRes.status === 'fulfilled'
@@ -230,6 +262,18 @@ export async function bwGetRequest(
         processStatus: s.step.processStatus,
         ...(s.logs ? { logs: s.logs } : { error: s.error }),
       })),
+      ...(chainLog ? {
+        processChainStepLog: {
+          logId: chainLog.logId,
+          note: chainLog.note,
+          steps: chainLog.logs.map((l) => ({
+            processType: l.node.sProcessType,
+            processVariant: l.node.sProcessVariant,
+            instance: l.instance,
+            ...(l.error ? { error: l.error } : { entries: l.entries }),
+          })),
+        },
+      } : {}),
     }, null, 2);
   }
 
@@ -258,8 +302,7 @@ export async function bwGetRequest(
   // inbound loads requestStatus lags at "Y" (in process) while lastProcessStatus already
   // reads "G" (green). Surfacing both keeps a genuinely running request distinguishable
   // from a finished one without remapping requestStatus.
-  if (headerRes.status === 'fulfilled') {
-    const header = JSON.parse(headerRes.value.body) as RequestListItem;
+  if (header) {
     lines.push(`Request: ${header.requestTsnExternal ?? requestTsn}`);
     lines.push(`  Status:       ${decodeStatus(requestStatus, header.requestStatus)}`);
     lines.push(`  Last Process: ${decodeStatus(processStatus, header.lastProcessStatus)}`);
@@ -268,7 +311,7 @@ export async function bwGetRequest(
     lines.push(`  Records:      ${header.records ?? ''}`);
     lines.push(`  User:         ${header.user?.fullName ?? ''}`);
     lines.push(`  Timestamp:    ${header.lastTimeStamp ?? ''}`);
-  } else {
+  } else if (headerRes.status === 'rejected') {
     lines.push(`Request: ${requestTsn}`);
     lines.push(`  ${unavailable(headerRes)}`);
   }
@@ -303,11 +346,16 @@ export async function bwGetRequest(
     lines.push(`  ${unavailable(processesRes)}`);
   }
 
-  // Section 4 — message log. longText is SAPscript-to-HTML; its only added value over
-  // message is the "Meldungsnr. {MSGID}" — extract that and append it, drop the raw HTML.
-  const formatLog = (log: LogMessage): string => {
-    const msgNo = log.longText?.match(/Meldungsnr\.\s*([A-Z0-9_\/]+)/)?.[1];
-    return `  [${log.severity ?? ''}] ${log.message ?? ''}${msgNo ? ` (${msgNo})` : ''}`;
+  // Section 4 — message log. longText is the SAPscript help document as HTML: it carries the
+  // message number and, for errors, the diagnosis with the message variables filled in.
+  // A document repeated by a later message of the same request is printed once.
+  const printedLongTexts = new Set<string>();
+  const formatLog = (log: LogMessage): string[] => {
+    const lt = parseLongText(log.longText);
+    const head = `  [${log.severity ?? ''}] ${log.message ?? ''}${lt?.number ? ` (${lt.number})` : ''}`;
+    if (!isErrorSeverity(log.severity) || printedLongTexts.has(log.longText ?? '')) return [head];
+    printedLongTexts.add(log.longText ?? '');
+    return [head, ...formatLongText(lt, '      ')];
   };
 
   lines.push('');
@@ -315,7 +363,7 @@ export async function bwGetRequest(
     const logs = JSON.parse(logsRes.value.body) as LogMessage[];
     lines.push(`── Message Log (${logs.length}) ──`);
     for (const log of logs) {
-      lines.push(formatLog(log));
+      lines.push(...formatLog(log));
     }
   } else {
     // Not the storage-code hint used for the other sections: this endpoint takes no storage
@@ -335,7 +383,7 @@ export async function bwGetRequest(
     if (logs) {
       lines.push(`── Message Log: ${title} (${logs.length}) ──`);
       for (const log of logs) {
-        lines.push(formatLog(log));
+        lines.push(...formatLog(log));
       }
     } else {
       lines.push(`── Message Log: ${title} ──`);
@@ -350,6 +398,23 @@ export async function bwGetRequest(
       `(${ownTsnSteps.length - stepLogs.length} further process step(s) have their own log; ` +
       `only the first ${MAX_STEP_LOGS} are read per call)`
     );
+  }
+
+  // Section 6 — data package messages, from the process chain step that ran the request
+  if (chainLog) {
+    if (chainLog.logs.length > 0) {
+      lines.push('');
+      lines.push(`Data package messages, from process chain run ${chainLog.logId}:`);
+      lines.push(...(await formatNodeLogs(client, chainLog.logs, false)).slice(1));
+    } else {
+      lines.push('');
+      lines.push('── Data Package Messages ──');
+      lines.push(
+        `  (not available: ${chainLog.note}. The request log above does not include the ` +
+        `messages of the data packages; BW returns them only through the step log of the ` +
+        `process chain run that executed the request.)`,
+      );
+    }
   }
 
   return lines.join('\n');

@@ -1619,7 +1619,11 @@ const TOOL_DEFINITIONS = [
       description:
         'Full status analysis of one load request in a single call, bundling the request ' +
         'header, DTP information (including start, finish and duration), the process step ' +
-        'chain and the message log. Read-only. ' +
+        'chain and the message log, errors with their long text. Read-only. ' +
+        'For a DTP request that did not finish green, the messages of its data packages are added ' +
+        'from the step log of the process chain run that executed it — with message variables and ' +
+        'the program location of a runtime error. A request run outside a process chain has no ' +
+        'such log, and the output says so. ' +
         'The request TSN comes from bw_list_requests output.',
       inputSchema: {
         type: 'object',
@@ -1639,7 +1643,7 @@ const TOOL_DEFINITIONS = [
           format: {
             type: 'string',
             enum: ['text', 'raw'],
-            description: 'Output format. "text" (default): readable summary. "raw": full parsed JSON of all four payloads.',
+            description: 'Output format. "text" (default): readable summary. "raw": full parsed JSON of all four payloads, plus the process chain step log where one is read.',
           },
         },
         required: ['request_tsn'],
@@ -4619,7 +4623,11 @@ const TOOL_DEFINITIONS = [
         'Read the execution detail of one process chain run — all process steps with type, variant, status, ' +
         'timestamps, and parent/child relationships (predecessor graph edges), plus the full message log. ' +
         'chain_id and log_id come from bw_list_process_chain_runs or bw_list_process_chain_last_status output. ' +
-        'Use this to diagnose a failed run: the message log contains the actual error messages.',
+        'Use this to diagnose a failed run. Errors come with their message number and long text ' +
+        '(diagnosis, system response, procedure). For every failed step the step log is read as well: ' +
+        'each error with its message variables and, for a runtime error in a routine, the class, ' +
+        'method and line it was raised at — the actual cause when a transformation caught the error ' +
+        'and left no short dump.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -4630,6 +4638,10 @@ const TOOL_DEFINITIONS = [
           log_id: {
             type: 'string',
             description: 'Run log ID from bw_list_process_chain_runs or bw_list_process_chain_last_status (logId field).',
+          },
+          include_warnings: {
+            type: 'boolean',
+            description: 'Also show long text, variables and program location for warnings, not only for errors (default false).',
           },
         },
         required: ['chain_id', 'log_id'],
@@ -6559,6 +6571,7 @@ async function handleToolCall(
           client,
           args?.chain_id as string,
           args?.log_id as string,
+          args?.include_warnings === true,
         );
         break;
 

@@ -1,4 +1,7 @@
 import { BwClient } from '../bw-client.js';
+import {
+  NodeLog, formatLongText, formatNodeLogs, isNotableType, parseLongText, readChainNodeLogs,
+} from './sap_messages.js';
 
 const ODATA_HEADERS = { Accept: 'application/json' };
 
@@ -163,6 +166,7 @@ export async function bwGetProcessChainRunDetail(
   client: BwClient,
   chainId: string,
   logId: string,
+  includeWarnings: boolean = false,
 ): Promise<string> {
   const baseFilter = `chainId eq '${chainId}' and logId eq '${logId}'`;
 
@@ -209,10 +213,30 @@ export async function bwGetProcessChainRunDetail(
     lines.push('');
   }
 
+  // The message line of a failed step is often generic ("runtime error while executing the
+  // rule -> long text"); the actual error, the rule and the program location are only in the
+  // message variables. Those come structured from the step log of the monitoring API, which
+  // is read for every failed step. Best effort, like the OData messages: each stands on its own.
+  let stepLogs: NodeLog[] = [];
+  let stepLogError = '';
+  try {
+    stepLogs = await readChainNodeLogs(client, logId);
+  } catch (err) {
+    stepLogError = String((err as Error).message).split('\n')[0];
+  }
+  const instancesWithStepLog = new Set(
+    stepLogs.filter((l) => !l.error).map((l) => l.instance.toUpperCase()),
+  );
+  const stepLogLines = async (): Promise<string[]> => {
+    if (stepLogError) return ['', '── Step Logs ──', `  (not readable: ${stepLogError})`];
+    return stepLogs.length > 0 ? formatNodeLogs(client, stepLogs, includeWarnings) : [];
+  };
+
   if (messageError) {
     lines.push('── Messages ──');
     lines.push(`  (not readable: ${messageError})`);
     lines.push('  The steps above were read separately and are complete.');
+    lines.push(...await stepLogLines());
     return lines.join('\n');
   }
 
@@ -226,32 +250,47 @@ export async function bwGetProcessChainRunDetail(
 
   // The same message repeats once per affected object or package — six identical warnings
   // about one DataStore is the normal shape of this log. Collapsed to one line with a count,
-  // which is what a reader can act on; the first occurrence keeps its timestamp.
-  const collapsed = new Map<string, { severity: string; ts: string; text: string; count: number }>();
+  // which is what a reader can act on; the first occurrence keeps its timestamp. The long text
+  // is part of the key: it carries the message variables, and two messages with the same text
+  // but different variables are different errors.
+  const collapsed = new Map<string, {
+    severity: string; ts: string; text: string; number: string; detail: string[]; count: number;
+  }>();
   for (const msg of shown) {
     const m = msg as Record<string, unknown>;
     const severity = String(m['messageType'] ?? '');
     const text = String(m['message'] ?? '');
-    const key = JSON.stringify([severity, text]);
+    const longtext = String(m['longtext'] ?? '');
+    const key = JSON.stringify([severity, m['messageId'], m['messageNumber'], text, longtext]);
     const seen = collapsed.get(key);
-    if (seen) seen.count++;
-    else {
-      collapsed.set(key, {
-        severity,
-        ts: odataDateToIso(m['timestamp'] as string | undefined) ?? '',
-        text,
-        count: 1,
-      });
+    if (seen) {
+      seen.count++;
+      continue;
     }
+    // Shown with the message only where no step log covers it, so a failed step does not
+    // print the same document twice.
+    const covered = instancesWithStepLog.has(String(m['instance'] ?? '').toUpperCase());
+    const detail = !covered && isNotableType(severity, includeWarnings)
+      ? formatLongText(parseLongText(longtext), '      ')
+      : [];
+    collapsed.set(key, {
+      severity,
+      ts: odataDateToIso(m['timestamp'] as string | undefined) ?? '',
+      text,
+      number: [m['messageId'], m['messageNumber']].filter(Boolean).join(' '),
+      detail,
+      count: 1,
+    });
   }
 
   lines.push(`── Messages (${messages.length}) ──`);
   if (messages.length === 0) lines.push('  (none)');
   for (const m of [...collapsed.values()].slice(0, MESSAGE_LIMIT)) {
-    // The long text of these messages is the SAPscript help document converted to HTML, which
-    // restates the message and nothing else. Hundreds of lines of escaped markup for no
-    // information, so it is left out.
-    lines.push(`  [${m.severity}] ${m.ts} — ${m.text}${m.count > 1 ? `  (${m.count}×)` : ''}`);
+    lines.push(
+      `  [${m.severity}] ${m.ts} — ${m.text}${m.number ? `  (${m.number})` : ''}` +
+      `${m.count > 1 ? `  (${m.count}×)` : ''}`,
+    );
+    lines.push(...m.detail);
   }
   if (collapsed.size > MESSAGE_LIMIT) {
     lines.push(`  … ${collapsed.size - MESSAGE_LIMIT} further distinct message(s) not shown`);
@@ -261,6 +300,8 @@ export async function bwGetProcessChainRunDetail(
   } else if (notable.length === 0 && messages.length > 0) {
     lines.push('  (no error or warning among them)');
   }
+
+  lines.push(...await stepLogLines());
 
   return lines.join('\n');
 }
