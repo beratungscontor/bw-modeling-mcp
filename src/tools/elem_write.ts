@@ -19,12 +19,14 @@ import {
   normalizeExceptionAggregation,
   stripCheckMarkers,
   walkMembers,
+  assertFormulaVariable,
   type ExceptionAggregation,
   type FormulaNode,
   type MemberProperties,
   type KeyFigureRestriction,
 } from './query_update.js';
 import type { RkfRestriction, RkfRestrictionValue, RkfOperator } from './rkf_create.js';
+import { checkUnitCurrency, defaultSelectionXml, formulaDefaultLiteral } from './variable.js';
 
 /**
  * Write paths for the reusable query components CKF, RKF and Structure (all TLOGO
@@ -284,6 +286,23 @@ async function resolveFormulaTree(
     return { type: 'component', component_id: uid, component_name: key };
   }
 
+  if (type === 'variable' && !node['variable_id']) {
+    const name = node['variable_name'];
+    if (!name) throw new Error('Formula variable operand requires variable_name.');
+    const key = String(name).toUpperCase();
+    const cacheKey = `VAR:${key}`;
+    let uid = uidCache.get(cacheKey);
+    if (!uid) {
+      const { body } = await client.get(`/sap/bw/modeling/variable/${bwSeg(key.toLowerCase())}/a`, variableAccept());
+      const openTag = body.match(/<Qry:mainComponent\b[^>]*>/)?.[0] ?? '';
+      assertFormulaVariable(key, openTag.match(/\binfoObject="([^"]+)"/)?.[1]);
+      uid = openTag.match(/\bid="([^"]+)"/)?.[1];
+      if (!uid) throw new Error(`Variable '${key}' has no id.`);
+      uidCache.set(cacheKey, uid);
+    }
+    return { type: 'variable', variable_id: uid, variable_name: key };
+  }
+
   return node;
 }
 
@@ -325,6 +344,12 @@ export function renderFormulaTree(node: FormulaNode, tag: string): string {
     return `<${tag} xsi:type="Qry:FormulaMemberOperand" member="${escapeXml(String(uid))}" operandType="Formula"/>`;
   }
 
+  if (type === 'variable') {
+    const uid = node['variable_id'];
+    if (!uid) throw new Error('Formula variable operand was not resolved to an ELEMUID.');
+    return `<${tag} xsi:type="Qry:FormulaMemberOperand" member="${escapeXml(String(uid))}" operandType="Variable"/>`;
+  }
+
   if (type === 'key_figure') {
     const name = node['name'];
     if (!name) throw new Error('Formula key_figure operand requires name.');
@@ -339,7 +364,7 @@ export function renderFormulaTree(node: FormulaNode, tag: string): string {
   }
 
   throw new Error(
-    `Unknown formula node type '${String(type)}' (expected operator, component, key_figure, or constant).`
+    `Unknown formula node type '${String(type)}' (expected operator, component, variable, key_figure, or constant).`
   );
 }
 
@@ -652,6 +677,11 @@ export function parseFormulaXml(fragment: string): FormulaNode | undefined {
       return { type: 'key_figure', name: (token['@_infoObject'] as string) ?? '' };
     }
     if (type === 'Qry:FormulaMemberOperand') {
+      // A variable must stay a variable: written back as a component it would turn into
+      // operandType="Formula" pointing at a variable id.
+      if (token['@_operandType'] === 'Variable') {
+        return { type: 'variable', variable_id: (token['@_member'] as string) ?? '' };
+      }
       return { type: 'component', component_id: (token['@_member'] as string) ?? '' };
     }
     if (type === 'Qry:FormulaConstant') {
@@ -1853,7 +1883,18 @@ export interface UpdateVariableArgs {
   input_type?: 'Optional' | 'MandatoryWithInitial' | 'MandatoryWithoutInitial';
   represents?: 'Interval' | 'SingleValue' | 'SeveralSingleValues' | 'SelectionOption';
   processing_type?: 'UserEntry' | 'CustomerExit' | 'Authorization' | 'ReplacementPath';
+  /** Formula variables: the default value, or null to remove it. */
+  default_value?: number | null;
+  /** Formula variables of dimension Amount or Price. */
+  currency?: string;
+  /** Formula variables of dimension Quantity or Price. */
+  unit?: string;
   transport_request?: string;
+}
+
+/** The default value already rendered in the logon user's decimal notation, or null to clear it. */
+export interface VariableDefaultLiteral {
+  literal: string | null;
 }
 
 /** The replacement path block a ReplacementPath variable needs; empty for every other type. */
@@ -1874,13 +1915,55 @@ const REPLACEMENT_PATH_CURRENT_MEMBER =
  */
 export function applyVariableChanges(
   doc: string,
-  args: UpdateVariableArgs
+  args: UpdateVariableArgs,
+  defaultValue?: VariableDefaultLiteral
 ): { document: string; applied: string[] } {
   const applied: string[] = [];
   const mainStart = doc.indexOf('<Qry:mainComponent');
   if (mainStart === -1) throw new Error('Document has no <Qry:mainComponent>.');
   const head = doc.slice(0, mainStart);
   let main = doc.slice(mainStart);
+  const mainOpen = main.match(/^<Qry:mainComponent\b[^>]*>/)?.[0] ?? '';
+  const isFormula = /\binfoObject="1FORMULA"/.test(mainOpen);
+  const dimension = mainOpen.match(/\bdimIndicator="([^"]*)"/)?.[1] ?? '';
+
+  if (isFormula) {
+    if (args.processing_type !== undefined && !['UserEntry', 'CustomerExit'].includes(args.processing_type)) {
+      throw new Error(`A formula variable is filled by "UserEntry" or "CustomerExit", not "${args.processing_type}".`);
+    }
+    if (args.represents !== undefined && args.represents !== 'SingleValue') {
+      throw new Error('A formula variable always represents a single value.');
+    }
+  } else {
+    for (const field of ['default_value', 'currency', 'unit'] as const) {
+      if (args[field] !== undefined) throw new Error(`${field} can only be changed on a formula variable.`);
+    }
+  }
+
+  if (isFormula && (args.currency !== undefined || args.unit !== undefined)) {
+    const currentKey = (tag: string) => main.match(new RegExp(`<Qry:${tag}\\b[^>]*\\bkey="([^"]*)"`))?.[1];
+    const currency = args.currency !== undefined ? args.currency : currentKey('currency');
+    const unit = args.unit !== undefined ? args.unit : currentKey('unit');
+    checkUnitCurrency(dimension, currency || undefined, unit || undefined);
+    for (const [tag, value] of [['currency', args.currency], ['unit', args.unit]] as const) {
+      if (value === undefined) continue;
+      const el = value ? `<Qry:${tag} key="${escapeXml(value.toUpperCase())}"/>` : `<Qry:${tag}/>`;
+      const re = new RegExp(`<Qry:${tag}\\b[^>]*?(\\/>|>[\\s\\S]*?<\\/Qry:${tag}>)`);
+      if (!re.test(main)) throw new Error(`Document has no <Qry:${tag}> element.`);
+      main = main.replace(re, el);
+      applied.push(`${tag} set to ${value ? value.toUpperCase() : '(none)'}`);
+    }
+  }
+
+  if (isFormula && defaultValue) {
+    const re = /<Qry:defaultValues\b[^>]*?(\/>|>[\s\S]*?<\/Qry:defaultValues>)/;
+    if (!re.test(main)) throw new Error('Document has no <Qry:defaultValues> element.');
+    main = main.replace(
+      re,
+      `<Qry:defaultValues>${defaultSelectionXml('1FORMULA', defaultValue.literal ?? undefined)}</Qry:defaultValues>`
+    );
+    applied.push(defaultValue.literal === null ? 'default value removed' : `default value set to ${args.default_value}`);
+  }
 
   if (args.description !== undefined) {
     const descEsc = escapeXml(args.description);
@@ -1981,22 +2064,30 @@ export async function bwUpdateVariable(client: BwClient, args: UpdateVariableArg
     args.ready_for_input === undefined &&
     args.input_type === undefined &&
     args.represents === undefined &&
-    args.processing_type === undefined
+    args.processing_type === undefined &&
+    args.default_value === undefined &&
+    args.currency === undefined &&
+    args.unit === undefined
   ) {
     throw new Error(
-      'Nothing to do: pass description, ready_for_input, input_type, represents and/or processing_type.'
+      'Nothing to do: pass description, ready_for_input, input_type, represents, processing_type, ' +
+        'default_value, currency and/or unit.'
     );
   }
 
   const nameUpper = args.variable_name.toUpperCase();
   const applied: string[] = [];
+  const defaultValue: VariableDefaultLiteral | undefined =
+    args.default_value === undefined
+      ? undefined
+      : { literal: args.default_value === null ? null : await formulaDefaultLiteral(client, args.default_value) };
 
   const { messages, document } = await withElementDocument(
     client,
     'variable',
     nameUpper,
     (doc) => {
-      const result = applyVariableChanges(doc, args);
+      const result = applyVariableChanges(doc, args, defaultValue);
       applied.push(...result.applied);
       return result.document;
     },

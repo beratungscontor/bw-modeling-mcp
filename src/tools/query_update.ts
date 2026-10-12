@@ -1770,6 +1770,28 @@ export const FORMULA_OPERATOR_ARITY: Record<string, [number, number]> = {
   IF: [3, 3],
 };
 
+/** Technical names (uppercased, deduplicated) of every variable operand in a formula tree. */
+export function collectFormulaVariables(node: FormulaNode | undefined, into: Set<string> = new Set()): Set<string> {
+  if (!node || typeof node !== 'object') return into;
+  if (node['type'] === 'variable' && node['variable_name']) {
+    into.add(String(node['variable_name']).toUpperCase());
+  }
+  for (const o of (Array.isArray(node['operands']) ? node['operands'] : []) as FormulaNode[]) {
+    collectFormulaVariables(o, into);
+  }
+  return into;
+}
+
+/** Only a formula variable stands for a number; a characteristic variable has no value to compute with. */
+export function assertFormulaVariable(nameUpper: string, infoObject: string | undefined): void {
+  if (infoObject !== '1FORMULA') {
+    throw new Error(
+      `Variable '${nameUpper}' is a characteristic variable (on ${infoObject ?? 'an unknown InfoObject'}); ` +
+        'only a formula variable can be a formula operand.'
+    );
+  }
+}
+
 /**
  * Renders operand node types a caller defines itself, returning undefined for the
  * nodes it leaves to the standard operand types.
@@ -1871,6 +1893,15 @@ export function renderFormulaNode(node: FormulaNode, doc: string, tag: string, o
     }
     return `<${tag} xsi:type="Qry:FormulaMemberOperand" member="${refs[0].id}" operandType="Member"/>`;
   }
+  if (type === 'variable') {
+    const nameUpper = String(node['variable_name'] ?? '').toUpperCase();
+    if (!nameUpper) throw new Error('Formula variable operand requires variable_name.');
+    const componentId = findSubComponentIdByTechnicalName(doc, nameUpper);
+    if (!componentId) {
+      throw new Error(`Formula variable operand: variable '${nameUpper}' is not embedded in the query.`);
+    }
+    return `<${tag} xsi:type="Qry:FormulaMemberOperand" member="${componentId}" operandType="Variable"/>`;
+  }
   if (type === 'key_figure') {
     const name = node['name'];
     if (!name) throw new Error('Formula key_figure operand requires name.');
@@ -1880,7 +1911,9 @@ export function renderFormulaNode(node: FormulaNode, doc: string, tag: string, o
     if (node['value'] === undefined || node['value'] === null) throw new Error('Formula constant operand requires value.');
     return `<${tag} xsi:type="Qry:FormulaConstant" value="${escapeXml(String(node['value']))}"/>`;
   }
-  throw new Error(`Unknown formula node type '${String(type)}' (expected operator, member, component, key_figure, or constant).`);
+  throw new Error(
+    `Unknown formula node type '${String(type)}' (expected operator, member, component, variable, key_figure, or constant).`
+  );
 }
 
 /**
@@ -2289,9 +2322,29 @@ export async function bwUpdateQueryKeyFigures(
     }
   }
 
+  // A variable in a query formula is embedded as a subComponent, like a filter variable,
+  // and referenced by that id.
+  const formulaVariableNames = new Set<string>();
+  for (const op of ops) {
+    collectFormulaVariables(op.formula, formulaVariableNames);
+    collectFormulaVariables(op.inverse?.formula, formulaVariableNames);
+  }
+  const formulaVariables: ResolvedVariable[] = [];
+  for (const name of formulaVariableNames) {
+    const resolved = await resolveVariable(client, name);
+    assertFormulaVariable(name, resolved.characteristic);
+    formulaVariables.push(resolved);
+  }
+
   const summary: string[] = [];
   const mutate = (xml: string): string => {
     let doc = xml;
+    for (const v of formulaVariables) {
+      if (!hasSubComponentId(doc, v.componentId)) doc = insertSubComponent(doc, v.subComponentXml);
+      for (const extra of v.extraSubComponents) {
+        if (!hasSubComponentId(doc, extra.id)) doc = insertSubComponent(doc, extra.xml);
+      }
+    }
     for (const op of ops) {
       if (op.action === 'add_key_figure') {
         const kyf = op.infoobject!.toUpperCase();

@@ -1,6 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import { BwClient, bwSeg, stripInfoAreaSentinel } from '../bw-client.js';
 import { ckfAccept, rkfAccept, structureAccept, variableAccept, parseExceptionAggregation } from './query.js';
+import { parseDecimal, userDecimalSeparator } from './variable.js';
 
 // ── XML Parser ───────────────────────────────────────────────────────────────
 
@@ -51,14 +52,15 @@ function buildSubComponentMaps(subComponents: Record<string, unknown>[]): {
     const technicalName = (sc['@_technicalName'] as string) ?? '';
     const description =
       ((sc['Qry:description'] as Record<string, unknown> | undefined)?.['@_value'] as string) ?? '';
-    if (scType === 'Qry:CalculatedMeasure') ckfMap.set(id, { technicalName, description });
+    // A formula variable shares the id lookup with the CKFs; operandType="Variable" on the
+    // operand is what tells the two apart.
+    if (scType === 'Qry:CalculatedMeasure' || scType === 'Qry:Variable') ckfMap.set(id, { technicalName, description });
     else if (scType === 'Qry:RestrictedMeasure') rkfMap.set(id, { technicalName, description });
   }
   return { ckfMap, rkfMap };
 }
 
 // ── Formula rendering (same approach as query.ts renderFormula) ──────────────
-// No variableMap needed — CP components don't reference variables.
 
 function renderFormula(
   token: Record<string, unknown>,
@@ -150,6 +152,9 @@ function formulaToTree(
     case 'Qry:FormulaMemberOperand': {
       const memberId = token['@_member'] as string;
       const name = ckfMap.get(memberId)?.technicalName ?? rkfMap.get(memberId)?.technicalName;
+      if (token['@_operandType'] === 'Variable') {
+        return name ? { type: 'variable', variable_name: name } : { type: 'variable', variable_id: memberId };
+      }
       return name ? { type: 'component', component_name: name } : { type: 'component', component_id: memberId };
     }
     case 'Qry:FormulaConstant':
@@ -207,6 +212,12 @@ function componentDescription(comp: Record<string, unknown>): string {
   return (entityProps?.['@_adtCore:description'] as string) ?? '';
 }
 
+function dependencyType(xsiType: string): string {
+  if (xsiType === 'Qry:CalculatedMeasure') return 'CKF';
+  if (xsiType === 'Qry:Variable') return 'Variable';
+  return 'RKF';
+}
+
 function buildDependencies(
   subComponents: Record<string, unknown>[]
 ): Array<{ technical_name: string; description: string; type: string }> {
@@ -214,7 +225,7 @@ function buildDependencies(
     technical_name: (sc['@_technicalName'] as string) ?? '',
     description:
       ((sc['Qry:description'] as Record<string, unknown> | undefined)?.['@_value'] as string) ?? '',
-    type: (sc['@_xsi:type'] as string) === 'Qry:CalculatedMeasure' ? 'CKF' : 'RKF',
+    type: dependencyType(sc['@_xsi:type'] as string),
   }));
 }
 
@@ -483,6 +494,41 @@ export async function bwGetStructure(client: BwClient, componentName: string): P
 
 // ── bw_get_variable ──────────────────────────────────────────────────────────
 
+/** The default value a variable document carries in defaultValues, as BW shows it. */
+export function formulaDefaultText(body: string): string | undefined {
+  const block = body.match(/<Qry:defaultValues>([\s\S]*?)<\/Qry:defaultValues>/)?.[1];
+  return block?.match(/<Qry:fromValue\b[^>]*>[\s\S]*?<Qry:value>([^<]*)<\/Qry:value>/)?.[1];
+}
+
+/**
+ * Dimension and default value of a formula variable. BW shows the default in the logon
+ * user's decimal notation ("2,50000"), so a fractional value is converted back only when
+ * that notation can be read; otherwise the text is reported as it came.
+ */
+async function formulaVariableDetails(
+  client: BwClient,
+  mainComp: Record<string, unknown>,
+  body: string
+): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = { dimension: (mainComp['@_dimIndicator'] as string) ?? '' };
+  const keyOf = (el: unknown) => (el && typeof el === 'object' ? (el as Record<string, unknown>)['@_key'] : undefined);
+  const currency = keyOf(mainComp['Qry:currency']);
+  const unit = keyOf(mainComp['Qry:unit']);
+  if (currency) out.currency = String(currency);
+  if (unit) out.unit = String(unit);
+  const text = formulaDefaultText(body);
+  if (text === undefined || text === '') return out;
+  if (/^-?\d+-?$/.test(text.trim())) {
+    out.default_value = parseDecimal(text, '.');
+    return out;
+  }
+  const separator = await userDecimalSeparator(client);
+  const value = separator ? parseDecimal(text, separator) : undefined;
+  if (value !== undefined) out.default_value = value;
+  else out.default_value_text = text;
+  return out;
+}
+
 /**
  * Read a reusable BW Variable off its own modeling resource.
  *
@@ -527,13 +573,17 @@ export async function bwGetVariable(
   const rawDateTo = textOf(mainComp['Qry:dateTo']);
   const hierarchyDateTo = /^0*$/.test(rawDateTo) ? '' : rawDateTo;
 
+  const variableType = textOf(mainComp['Qry:type']);
+  const formula = variableType === 'Formula' ? await formulaVariableDetails(client, mainComp, body) : {};
+
   return JSON.stringify(
     {
       object_type: 'variable',
       technical_name: (mainComp['@_technicalName'] as string) ?? variableName.toUpperCase(),
       description: componentDescription(mainComp),
       info_object: (mainComp['@_infoObject'] as string) ?? '',
-      variable_type: textOf(mainComp['Qry:type']),
+      variable_type: variableType,
+      ...formula,
       processing_type: textOf(mainComp['Qry:procType']),
       represents: textOf(mainComp['Qry:represents']),
       input_type: textOf(mainComp['Qry:inputType']),

@@ -37,7 +37,7 @@ import { bwChangePackage, bwListChangeableTransports } from './tools/cto.js';
 import { bwCreateInfosource, bwUpdateInfosource, bwGetInfosource, InfosourceField } from './tools/infosource.js';
 import { bwPushData, bwGetPushSchema } from './tools/push.js';
 import { bwGetQuery, bwCreateQuery } from './tools/query.js';
-import { bwCreateVariable, CreateVariableArgs } from './tools/variable.js';
+import { bwCreateVariable, CreateVariableArgs, type FormulaDimension } from './tools/variable.js';
 import { bwUpdateQueryLayout, bwUpdateQueryFilter, bwUpdateQueryKeyFigures, bwUpdateQuerySettings, EXCEPTION_AGGREGATION_TYPES, LayoutOperation, FilterOperation, KeyFigureOperation, UpdateQuerySettingsArgs } from './tools/query_update.js';
 import { bwUpdateQueryCharacteristic, UpdateQueryCharacteristicArgs } from './tools/query_characteristic.js';
 import { bwUpdateQueryCells, UpdateQueryCellsArgs } from './tools/query_cells.js';
@@ -2127,11 +2127,14 @@ const TOOL_DEFINITIONS = [
     {
       name: 'bw_create_variable',
       description:
-        'Create a reusable BW Variable on a characteristic, for use as a filter parameter in ' +
-        'queries. The variable is created active and consistent. Covers processing types ' +
-        'UserEntry (manual entry, the default), CustomerExit, Authorization and the ' +
-        'current-member flavour of ReplacementPath, and stands for a characteristic value, ' +
-        'a hierarchy or hierarchy nodes. Text and formula variables are not supported. ' +
+        'Create a reusable BW Variable, created active and consistent. A characteristic variable ' +
+        '(the default) is a filter parameter on a characteristic: processing types UserEntry ' +
+        '(manual entry, the default), CustomerExit, Authorization and the current-member flavour ' +
+        'of ReplacementPath; it stands for a characteristic value, a hierarchy or hierarchy nodes. ' +
+        'A formula variable (variable_type "Formula") stands for a number and is used as a formula ' +
+        'operand in bw_update_query_key_figures, bw_create_ckf and bw_update_ckf: no iobj_name, ' +
+        'filled by UserEntry or CustomerExit, with a dimension, an optional default value, and a ' +
+        'unit (Quantity), a currency (Amount) or either (Price). Text variables are not supported. ' +
         'To keep a variable out of the user\'s variable screen, set ready_for_input false.',
       inputSchema: {
         type: 'object',
@@ -2142,7 +2145,7 @@ const TOOL_DEFINITIONS = [
           },
           iobj_name: {
             type: 'string',
-            description: 'Technical name of the InfoObject (characteristic) this variable is based on (e.g. "0CALMONTH"). Must exist in the system.',
+            description: 'Technical name of the InfoObject (characteristic) this variable is based on (e.g. "CHARACTERISTIC"). Must exist in the system. Required for a characteristic variable; leave it out for a formula variable.',
           },
           description: {
             type: 'string',
@@ -2172,8 +2175,25 @@ const TOOL_DEFINITIONS = [
           },
           variable_type: {
             type: 'string',
-            enum: ['CharacteristicValue', 'Hierarchy', 'HierarchyNodes'],
-            description: 'What the variable stands for: a characteristic value (default), a whole hierarchy, or hierarchy nodes. Hierarchy variables still reference a characteristic via iobj_name.',
+            enum: ['CharacteristicValue', 'Hierarchy', 'HierarchyNodes', 'Formula'],
+            description: 'What the variable stands for: a characteristic value (default), a whole hierarchy, hierarchy nodes, or a number (Formula). Hierarchy variables still reference a characteristic via iobj_name; a formula variable references none and always represents a single value.',
+          },
+          dimension: {
+            type: 'string',
+            enum: ['Number', 'Amount', 'Quantity', 'Price', 'Quota', 'Date', 'Time'],
+            description: 'Formula variables only: what the number stands for. Defaults to Number.',
+          },
+          default_value: {
+            type: 'number',
+            description: 'Formula variables only: the value proposed on the variable screen. BW parses it in the logon user\'s decimal notation, so a fractional value needs read access to that setting (USR01 through ADT DataPreview); without it only whole numbers are accepted.',
+          },
+          unit: {
+            type: 'string',
+            description: 'Formula variables only: unit of measure. Required for dimension Quantity (a query cannot be generated without it), optional for Price.',
+          },
+          currency: {
+            type: 'string',
+            description: 'Formula variables only: currency key. Required for dimension Amount, optional for Price.',
           },
           input_type: {
             type: 'string',
@@ -2193,7 +2213,7 @@ const TOOL_DEFINITIONS = [
             description: 'Transport request number (e.g. "DEVK900123"). Only needed when the target package is transportable.',
           },
         },
-        required: ['variable_name', 'iobj_name', 'description'],
+        required: ['variable_name', 'description'],
       },
     },
     {
@@ -2226,7 +2246,8 @@ const TOOL_DEFINITIONS = [
       name: 'bw_update_variable',
       description:
         'Change a reusable BW Variable in place: description, input readiness, input type ' +
-        '(optional / mandatory), selection type and processing type. The UID stays the same, so ' +
+        '(optional / mandatory), selection type and processing type, and on a formula variable its ' +
+        'default value, unit and currency. The UID stays the same, so ' +
         'references from queries, CKFs and structures survive the change — unlike the ' +
         'delete-and-recreate that was the only correction path before, which BW refuses as soon as ' +
         'anything references the variable, and deleting a query does not remove its reusable ' +
@@ -2255,7 +2276,19 @@ const TOOL_DEFINITIONS = [
           processing_type: {
             type: 'string',
             enum: ['UserEntry', 'CustomerExit', 'Authorization', 'ReplacementPath'],
-            description: 'How the variable is filled. ReplacementPath is limited to the current-member variant, the same one bw_create_variable writes.',
+            description: 'How the variable is filled. ReplacementPath is limited to the current-member variant, the same one bw_create_variable writes. A formula variable takes UserEntry or CustomerExit only.',
+          },
+          default_value: {
+            type: ['number', 'null'],
+            description: 'Formula variables only: new default value, or null to remove it. A fractional value needs the logon user\'s decimal notation, as in bw_create_variable.',
+          },
+          unit: {
+            type: 'string',
+            description: 'Formula variables only: unit of measure (dimension Quantity or Price); an empty string removes it where the dimension allows.',
+          },
+          currency: {
+            type: 'string',
+            description: 'Formula variables only: currency key (dimension Amount or Price); an empty string removes it where the dimension allows.',
           },
           transport_request: { type: 'string', description: 'Transport request to record the change in.' },
         },
@@ -2491,6 +2524,8 @@ const TOOL_DEFINITIONS = [
                     '{ "type": "component", "component_name": "CKF_NAME" } (references the structure member that ' +
                     'wraps that CKF/RKF — the component must already be added as a structure member; a query ' +
                     'formula cannot reference a component id directly); ' +
+                    '{ "type": "variable", "variable_name": "VAR_NAME" } (a formula variable — see bw_create_variable; ' +
+                    'it is embedded in the query on save, a characteristic variable is refused); ' +
                     '{ "type": "key_figure", "name": "IOBJ_NAME" }; { "type": "constant", "value": "5" }. ' +
                     'Operator codes (BW analytic engine, operand counts enforced): ' +
                     'basic +,- (1-2), *,/ (2); ** power, DIV, MOD (2). ' +
@@ -3718,7 +3753,7 @@ const TOOL_DEFINITIONS = [
           },
           technical_name: { type: 'string', description: 'Technical name of the new CKF.' },
           description: { type: 'string', description: 'Description of the CKF.' },
-          formula: { type: 'object', description: "Formula tree. A node is one of: {\"type\":\"operator\",\"code\":\"+\",\"operands\":[...]} (codes as in the BW formula editor: + - * / , NDIV0, IF, MAX, %A, …); {\"type\":\"component\",\"component_name\":\"...\"} for a reusable CKF/RKF; {\"type\":\"key_figure\",\"name\":\"...\"} for a basic key figure InfoObject; {\"type\":\"constant\",\"value\":100}. Operand counts are checked against the operator catalog before anything is written." },
+          formula: { type: 'object', description: "Formula tree. A node is one of: {\"type\":\"operator\",\"code\":\"+\",\"operands\":[...]} (codes as in the BW formula editor: + - * / , NDIV0, IF, MAX, %A, …); {\"type\":\"component\",\"component_name\":\"...\"} for a reusable CKF/RKF; {\"type\":\"key_figure\",\"name\":\"...\"} for a basic key figure InfoObject; {\"type\":\"variable\",\"variable_name\":\"...\"} for a formula variable; {\"type\":\"constant\",\"value\":100}. Operand counts are checked against the operator catalog before anything is written." },
           decimals: { type: 'integer', description: 'Number of decimal places (0-9). Server default when omitted.' },
           exception_aggregation: {
             type: 'object',
@@ -3753,7 +3788,7 @@ const TOOL_DEFINITIONS = [
           description: { type: 'string', description: 'New description.' },
           formula: {
             type: 'object',
-            description: 'Replacement formula tree (mutually exclusive with "operations"). ' + "Formula tree. A node is one of: {\"type\":\"operator\",\"code\":\"+\",\"operands\":[...]} (codes as in the BW formula editor: + - * / , NDIV0, IF, MAX, %A, …); {\"type\":\"component\",\"component_name\":\"...\"} for a reusable CKF/RKF; {\"type\":\"key_figure\",\"name\":\"...\"} for a basic key figure InfoObject; {\"type\":\"constant\",\"value\":100}. Operand counts are checked against the operator catalog before anything is written.",
+            description: 'Replacement formula tree (mutually exclusive with "operations"). ' + "Formula tree. A node is one of: {\"type\":\"operator\",\"code\":\"+\",\"operands\":[...]} (codes as in the BW formula editor: + - * / , NDIV0, IF, MAX, %A, …); {\"type\":\"component\",\"component_name\":\"...\"} for a reusable CKF/RKF; {\"type\":\"key_figure\",\"name\":\"...\"} for a basic key figure InfoObject; {\"type\":\"variable\",\"variable_name\":\"...\"} for a formula variable; {\"type\":\"constant\",\"value\":100}. Operand counts are checked against the operator catalog before anything is written.",
           },
           decimals: { type: 'integer', description: 'Number of decimal places (0-9).' },
           exception_aggregation: {
@@ -3780,7 +3815,7 @@ const TOOL_DEFINITIONS = [
                     'adding a third operand, and removing replaces the operator holding the operand ' +
                     'with its sibling. Both keep every other operand and their order intact.',
                 },
-                operand: { type: 'object', description: 'Operand to add (append_operand). ' + "Formula tree. A node is one of: {\"type\":\"operator\",\"code\":\"+\",\"operands\":[...]} (codes as in the BW formula editor: + - * / , NDIV0, IF, MAX, %A, …); {\"type\":\"component\",\"component_name\":\"...\"} for a reusable CKF/RKF; {\"type\":\"key_figure\",\"name\":\"...\"} for a basic key figure InfoObject; {\"type\":\"constant\",\"value\":100}. Operand counts are checked against the operator catalog before anything is written." },
+                operand: { type: 'object', description: 'Operand to add (append_operand). ' + "Formula tree. A node is one of: {\"type\":\"operator\",\"code\":\"+\",\"operands\":[...]} (codes as in the BW formula editor: + - * / , NDIV0, IF, MAX, %A, …); {\"type\":\"component\",\"component_name\":\"...\"} for a reusable CKF/RKF; {\"type\":\"key_figure\",\"name\":\"...\"} for a basic key figure InfoObject; {\"type\":\"variable\",\"variable_name\":\"...\"} for a formula variable; {\"type\":\"constant\",\"value\":100}. Operand counts are checked against the operator catalog before anything is written." },
                 operator: {
                   type: 'string',
                   description: 'Operator joining the new operand to the formula (append_operand). Default "+".',
@@ -6027,14 +6062,18 @@ async function handleToolCall(
       case 'bw_create_variable':
         text = await bwCreateVariable(client, {
           variable_name: args?.variable_name as string,
-          iobj_name: args?.iobj_name as string,
+          iobj_name: args?.iobj_name as string | undefined,
           description: args?.description as string,
           development_class: args?.development_class as string | undefined,
           ready_for_input: args?.ready_for_input as boolean | undefined,
           reusable: args?.reusable as boolean | undefined,
           represents: args?.represents as 'Interval' | 'SingleValue' | 'SeveralSingleValues' | 'SelectionOption' | undefined,
           processing_type: args?.processing_type as 'UserEntry' | 'CustomerExit' | 'Authorization' | 'ReplacementPath' | undefined,
-          variable_type: args?.variable_type as 'CharacteristicValue' | 'Hierarchy' | 'HierarchyNodes' | undefined,
+          variable_type: args?.variable_type as 'CharacteristicValue' | 'Hierarchy' | 'HierarchyNodes' | 'Formula' | undefined,
+          dimension: args?.dimension as FormulaDimension | undefined,
+          default_value: args?.default_value as number | undefined,
+          unit: args?.unit as string | undefined,
+          currency: args?.currency as string | undefined,
           input_type: args?.input_type as 'Optional' | 'MandatoryWithInitial' | 'MandatoryWithoutInitial' | undefined,
           master_language: args?.master_language as string | undefined,
           package: args?.package as string | undefined,
