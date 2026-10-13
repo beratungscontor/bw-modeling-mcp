@@ -205,7 +205,7 @@ Switch the Transformation runtime between ABAP and HANA (AMDP). The current runt
 ## DTP (Data Transfer Process)
 
 ### `bw_get_dtp`
-Read the full definition of a single DTP — source, target, transformation reference, extraction settings (mode, package size), and all filter fields including value selections and routine code. DTP names are UUID-like keys — use `bw_xref` or `bw_get_dtps` to find them.
+Read the full definition of a single DTP — source, target, transformation reference, extraction settings (mode, package size), and all filter fields including value selections and routine code. DTP names are UUID-like keys — use `bw_xref` or `bw_get_dtps` to find them. `format: "raw"` returns the unmodified XML.
 
 ### `bw_get_dtps`
 List all DTPs that depend on a given BW object or Transformation.

@@ -134,7 +134,7 @@ interface DtpInfo {
 function parseDtpXml(xml: string, status: string): DtpInfo {
   const attr = (tag: string, name: string) => {
     const m = tag.match(new RegExp(`\\b${name}="([^"]*)"`));
-    return m ? m[1] : '';
+    return m ? decodeXmlEntities(m[1]) : '';
   };
 
   // Root attributes
@@ -185,8 +185,8 @@ function parseDtpXml(xml: string, status: string): DtpInfo {
       const selBody = sm[2] ?? '';
       const operator = selAttrs.match(/\boperator="([^"]*)"/)?.[1] ?? '';
       const excluding = selAttrs.includes('excluding="true"');
-      const low = selBody.match(/<low[^>]*\bvalue="([^"]*)"/)?.[1] ?? '';
-      const high = selBody.match(/<high[^>]*\bvalue="([^"]*)"/)?.[1] ?? '';
+      const low = decodeXmlEntities(selBody.match(/<low[^>]*\bvalue="([^"]*)"/)?.[1] ?? '');
+      const high = decodeXmlEntities(selBody.match(/<high[^>]*\bvalue="([^"]*)"/)?.[1] ?? '');
       selections.push({ operator, excluding, low, high });
     }
 
@@ -196,7 +196,7 @@ function parseDtpXml(xml: string, status: string): DtpInfo {
       const codeRegex = /<code(?:\s[^>]*)?>([^<]*)<\/code>/g;
       let cm: RegExpExecArray | null;
       while ((cm = codeRegex.exec(fieldBody)) !== null) {
-        routineCode.push(cm[1]);
+        routineCode.push(decodeXmlEntities(cm[1]));
       }
     }
 
@@ -216,7 +216,7 @@ function parseDtpXml(xml: string, status: string): DtpInfo {
   const globalRegex = /<globalRoutineCode>([^<]*)<\/globalRoutineCode>/g;
   let gm: RegExpExecArray | null;
   while ((gm = globalRegex.exec(xml)) !== null) {
-    globalRoutineCode.push(gm[1]);
+    globalRoutineCode.push(decodeXmlEntities(gm[1]));
   }
 
   // Semantic group candidates. Entries with field="true" are plain fields or key figures,
@@ -257,12 +257,13 @@ function parseDtpXml(xml: string, status: string): DtpInfo {
  *   GET /sap/bw/modeling/dtpa/{dtpName}/m?forceCacheUpdate=true
  *   Parse key fields and return readable summary.
  */
-export async function bwGetDtp(client: BwClient, dtpName: string): Promise<string> {
+export async function bwGetDtp(client: BwClient, dtpName: string, format: 'text' | 'raw' = 'text'): Promise<string> {
   // Fresh session: the shared client's buffer serves the stale inactive shadow
   // after this session touched the DTP (forceCacheUpdate alone does not help there).
   const path = `/sap/bw/modeling/dtpa/${bwSeg(dtpName)}/m`;
   const result = await freshRead(path, MEDIA_TYPES['dtpa']);
   const status = result.headers['object_status'] ?? result.headers['OBJECT_STATUS'] ?? 'unknown';
+  if (format === 'raw') return result.body;
 
   const info = parseDtpXml(result.body, status);
 
@@ -332,8 +333,6 @@ export async function bwGetDtp(client: BwClient, dtpName: string): Promise<strin
       lines.push(`  ${line}`);
     }
   }
-
-  lines.push('', `── Raw XML ──`, result.body);
 
   return lines.join('\n');
 }

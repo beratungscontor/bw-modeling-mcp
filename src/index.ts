@@ -1514,6 +1514,11 @@ const TOOL_DEFINITIONS = [
             type: 'string',
             description: 'DTP name (e.g. "DTP_...").',
           },
+          format: {
+            type: 'string',
+            enum: ['text', 'raw'],
+            description: '"text" (default): readable summary. "raw": the unmodified XML.',
+          },
         },
         required: ['dtp_name'],
       },
@@ -6043,7 +6048,7 @@ async function handleToolCall(
         break;
 
       case 'bw_get_dtp':
-        text = await bwGetDtp(client, args?.dtp_name as string);
+        text = await bwGetDtp(client, args?.dtp_name as string, (args?.format as 'text' | 'raw') ?? 'text');
         break;
 
       case 'bw_get_process_chain':

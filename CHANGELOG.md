@@ -13,6 +13,7 @@
 
 ### Improved
 
+- **`bw_get_dtp` answers with the summary alone** — every answer carried the complete XML of the DTP after the summary, some ten times its length, and showed escaped characters such as `->` as `-&gt;`, also in selection values and routine code. The XML now comes only with `format: "raw"`.
 - **`bw_query_data` says whether more rows follow** — BICS reports no total row count, so a page that happened to end where the result ended looked complete, and so did one that did not. The text answer now reads one row beyond the page and says `More rows: yes — continue with from_row=…` or `More rows: no`. An empty result reports the requested row range instead of a fixed one.
 - **The `state` description of `bw_query_data` says what a state does to the layout** — it asked for every InfoObject of the query, FREE ones included. Characteristics staying on FREE need not be listed; rows and columns, however, show only what the state lists there, and a state without the key figure structure returns no data. Based on #44.
 - **`bw_get_query` shows the display hierarchy of each characteristic** — its name or variable, whether it is active or only assigned, version, key date, and the display options that differ from the default. Until now whether a characteristic in the layout had a hierarchy was not visible in the query definition the tool returned. Names such as `0001` and key dates such as `00000000` are read literally instead of as numbers.
