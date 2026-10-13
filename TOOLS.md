@@ -1,6 +1,6 @@
 # Tools Reference
 
-Every tool the server exposes — 114 in total — with what it does and the parameters that matter.
+Every tool the server exposes — 115 in total — with what it does and the parameters that matter.
 Tools marked _(Read only)_ change nothing in BW; everything else writes, activates, runs, or unlocks.
 A writing tool refuses a parameter it does not declare and names the ones it takes, so a misspelt
 parameter cannot be reported as applied.
@@ -354,11 +354,20 @@ Change a reusable structure: add, remove, re-configure or move members. The chan
 ### `bw_query_data` _(Read only)_
 Execute a BEx Query or preview data from an InfoProvider (aDSO, CompositeProvider) via the BICS reporting endpoint. Returns a formatted result table with hierarchy indentation.
 
-Parameters: `comp_id` (query or provider name), `is_provider` (set `true` for direct aDSO/HCPR access), `state` (axis placement — ROWS/COLUMNS/FREE — and per-characteristic filters supporting EQ/BT/GT/LT/GE/LE, include/exclude, external key, internal GUID key, and hierarchy-node filters), `variables` (fill query variables; name and id must be copied verbatim from the GET response), `from_row`/`to_row` (pagination), `drill_operations` (expand or collapse hierarchy and structure nodes by 1-based tuple index: `drill_state=3` expands, `drill_state=2` collapses), `format` (`text` default — formatted table; `raw` — XML).
+Parameters: `comp_id` (query or provider name), `is_provider` (set `true` for direct aDSO/HCPR access), `state` (axis placement — ROWS/COLUMNS/FREE — and per-characteristic filters supporting EQ/BT/GT/LT/GE/LE, include/exclude, external key, internal GUID key, and hierarchy-node filters), `variables` (fill query variables; name and id must be copied verbatim from the GET response), `from_row`/`to_row` (pagination), `drill_operations` (expand or collapse hierarchy and structure nodes by 1-based tuple index: `drill_state=3` expands, `drill_state=2` collapses), `with_statistics` (see below), `format` (`text` default — formatted table; `raw` — XML).
 
 A hierarchy node is filtered with `nodeId: 1` and the node name as `lowInt`; a text node also needs `nodeType: "0HIER_NODE"`. The node must belong to the display hierarchy of the query (`bw_get_query` shows it, `bw_get_hierarchy` its nodes); a hierarchy in the state is not applied. The text answer lists under `Not applied` what BW answered differently from the request without an error — an excluded node it applied as included, a different hierarchy, a filter value missing from the effective selection, a characteristic on another axis.
 
+Rows and columns show exactly what the state lists there, in the order given; everything else drops out, the key figure structure too, which leaves no data. List the complete layout wanted on ROWS and COLUMNS, structures included; characteristics staying on FREE need not be listed.
+
+BICS reports no total row count, so the text answer reads one row beyond the page and says whether the result continues (`More rows: yes — continue with from_row=…`) or ends.
+
+With `with_statistics: true` the answer ends with the timing of the call (server total, BW HTTP request, rendering, request and response size) and the BW statistics of its navigation step: BW runtime by layer (OLAP processor, cache, authorizations, data manager and database, transfer to the front end, BICS provider), the top events, records read and transferred, the effective "Operations in SAP HANA" setting, and with one step in the window the split of the HTTP time into BW runtime and transfer. It needs statistics switched on for the query or provider (transaction RSDDSTAT) and ADT DataPreview access.
+
 Always call `bw_get_query` or `bw_get_adso` first to discover the axis layout and characteristic IDs, and call `bw_get_filter_values` before setting any filter or variable value.
+
+### `bw_query_statistics` _(Read only)_
+Read the BW query statistics (RSDDSTAT) of any frontend — what RSRT statistics and ST03 show, without SAP GUI. With `query_name` or `provider` (a direct provider call is recorded under "$" plus its name): every execution in a time window (`from` / `to`, or the last `hours`, default 24) with count, min, median, p90 and max runtime and the users, plus the breakdown of the `slowest` ones (default 3). With `step_uid`: one navigation step in full, by layer and event, with records read and transferred, the "Operations in SAP HANA" setting and, at a statistics level that records it, the data manager time per provider. The tables are read through ADT DataPreview, so statistics must be switched on for the object and the user needs DataPreview access; it works on classic releases too.
 
 ### `bw_get_filter_values` _(Read only)_
 Look up valid values for a characteristic — required before setting any filter or variable. Returns `CHAVL_EXT` (use for state filters) and `CHAVL_INT` (use for variable inputs); formats differ for date-type characteristics. Supports wildcard search (`*` for all values, prefix match e.g. `2022*`). Optionally scope results to a specific InfoProvider.

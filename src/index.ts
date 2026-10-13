@@ -80,6 +80,7 @@ import {
 import { bwListContents } from './tools/repository.js';
 import { bwListSourceSystems, bwListDatasources, bwGetSourceSystem, bwGetDatasource, bwPreviewDatasource, bwListRemoteEntities, bwCreateDatasource, bwChangeDatasourceDelta, bwSetDatasourceFields } from './tools/datasource.js';
 import { bwGetDataflow } from './tools/dataflow.js';
+import { bwQueryStatistics } from './tools/query_statistics.js';
 import { bwQueryData, bwGetFilterValues, InfoObjectState, VariableInput, DrillOperation } from './tools/reporting.js';
 import { bwGetRoles, bwGetQueryRoles, bwSetQueryRoles, bwGetRoleQueries } from './tools/roles.js';
 import { bwGetProcessChain } from './tools/processchain.js';
@@ -4160,7 +4161,9 @@ const TOOL_DEFINITIONS = [
             type: 'object',
             description:
               'Axis layout and optional per-characteristic filters. ' +
-              'All InfoObjects from the query must be listed (even those staying on FREE axis). ' +
+              'Rows and columns show exactly what the state lists there, in the order given, and everything else ' +
+              'drops out of the result — the key figure structure too, which leaves no data. So list the complete ' +
+              'layout wanted on ROWS and COLUMNS, structures included. Characteristics staying on FREE need not be listed. ' +
               'id values must come from the GET metadata response.',
             properties: {
               infoObjects: {
@@ -4254,7 +4257,11 @@ const TOOL_DEFINITIONS = [
           },
           to_row: {
             type: 'number',
-            description: 'End row for pagination (default 1000).',
+            description: 'End row for pagination (default 1000). The text answer says whether more rows follow and from which from_row to continue.',
+          },
+          with_statistics: {
+            type: 'boolean',
+            description: 'Append the timing of the call and the BW statistics of its navigation step: BW runtime by layer (OLAP, cache, authorizations, database, transfer), top events, records read and transferred, the effective "Operations in SAP HANA" setting, and how the HTTP time splits into BW runtime and transfer. Needs statistics switched on for the query or provider (transaction RSDDSTAT) and ADT DataPreview access.',
           },
           drill_operations: {
             type: 'array',
@@ -4279,6 +4286,28 @@ const TOOL_DEFINITIONS = [
           },
         },
         required: ['comp_id'],
+      },
+    },
+    {
+      name: 'bw_query_statistics',
+      description:
+        'Read the BW query statistics (RSDDSTAT) of any frontend, as RSRT statistics and ST03 show them, without SAP GUI. ' +
+        'With query_name or provider: every execution in a time window (default the last 24 hours) with count, ' +
+        'min / median / p90 / max runtime and the users, plus the breakdown of the slowest ones. With step_uid: one ' +
+        'navigation step in full — BW runtime by layer, top events, records read and transferred, the effective ' +
+        '"Operations in SAP HANA" setting and the data manager time per provider. Statistics must be switched on for ' +
+        'the object (transaction RSDDSTAT). To measure one call of this server, use bw_query_data with_statistics instead.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query_name: { type: 'string', description: 'Query whose executions to read (e.g. "QUERY_NAME").' },
+          provider: { type: 'string', description: 'InfoProvider queried directly, as bw_query_data with is_provider does (e.g. "PROVIDER_NAME").' },
+          step_uid: { type: 'string', description: 'One navigation step, as shown in an earlier answer.' },
+          from: { type: 'string', description: 'Start of the window, ISO date or timestamp (UTC unless an offset is given).' },
+          to: { type: 'string', description: 'End of the window (default now).' },
+          hours: { type: 'number', description: 'Window length when from is not given (default 24).' },
+          slowest: { type: 'number', description: 'How many of the slowest executions to break down (default 3, at most 10, 0 for none).' },
+        },
       },
     },
     {
@@ -6591,10 +6620,23 @@ async function handleToolCall(
           variables,
           (args?.from_row as number) ?? 0,
           (args?.to_row as number) ?? 1000,
-          drillOperations
+          drillOperations,
+          (args?.with_statistics as boolean) ?? false,
         );
         break;
       }
+
+      case 'bw_query_statistics':
+        text = await bwQueryStatistics(client, {
+          query_name: args?.query_name as string | undefined,
+          provider: args?.provider as string | undefined,
+          step_uid: args?.step_uid as string | undefined,
+          from: args?.from as string | undefined,
+          to: args?.to as string | undefined,
+          hours: args?.hours as number | undefined,
+          slowest: args?.slowest as number | undefined,
+        });
+        break;
 
       case 'bw_get_filter_values':
         text = await bwGetFilterValues(

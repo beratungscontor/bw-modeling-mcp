@@ -264,6 +264,8 @@ src/
     ├── query_cells.ts    # bw_update_query_cells — reference, formula and help cells of a query
     │                     # with two structures (Qry:gridCells / Qry:helpCells)
     ├── reporting.ts      # bw_query_data, bw_get_filter_values — BICS reporting endpoint (/sap/bw/modeling/comp/reporting)
+    ├── query_statistics.ts # bw_query_statistics and bw_query_data with_statistics — RSDDSTAT* through
+    │                     # ADT DataPreview; every statement fixed, escaped and within 255 characters
     ├── remodeling.ts     # bw_list_remodeling_requests, bw_get_remodeling_request,
     │                     # bw_run_remodeling — remodeling monitor via the bw4 manage API
     ├── repository.ts     # bw_list_contents

@@ -1,4 +1,6 @@
 import { BwClient } from '../bw-client.js';
+import { resolveLogonUser } from './logon_user.js';
+import { statisticsForCall, statObjectName } from './query_statistics.js';
 
 const BICS_ACCEPT = 'application/vnd.sap.bw.modeling.bicsresponse-v1_1_0+xml';
 const BICS_CONTENT_TYPE = 'application/vnd.sap.bw.modeling.bicsrequest-v1_1_0+xml';
@@ -417,7 +419,14 @@ function tupleLabel(values: TupleValue[]): string {
   }).filter(s => s).join(' / ');
 }
 
-function renderQueryDataText(xml: string, isGet: boolean, findings: string[] = []): string {
+export interface Paging {
+  fromRow: number;
+  toRow: number;
+  /** One row beyond the page was requested to learn whether the result continues. */
+  probed: boolean;
+}
+
+function renderQueryDataText(xml: string, isGet: boolean, findings: string[] = [], paging?: Paging): string {
   const lines: string[] = [];
 
   // 1. Header
@@ -432,7 +441,17 @@ function renderQueryDataText(xml: string, isGet: boolean, findings: string[] = [
   if (viewAttrs.dataRollup) lines.push(`Data as of: ${viewAttrs.dataRollup}`);
 
   const rs = parseResultSet(xml);
-  lines.push(`Row range: ${rs.fromRow}–${rs.toRow}`);
+  // BICS reports no total row count; the extra row asked for says whether the result goes on.
+  let more: boolean | undefined;
+  if (paging?.probed) {
+    const pageSize = paging.toRow - paging.fromRow;
+    more = rs.rowTuples.length > pageSize;
+    if (more) rs.rowTuples = rs.rowTuples.slice(0, pageSize);
+  }
+  lines.push(`Row range: ${paging?.fromRow ?? rs.fromRow}–${paging?.toRow ?? rs.toRow}`);
+  if (more !== undefined) {
+    lines.push(more ? `More rows: yes — continue with from_row=${paging!.toRow}` : 'More rows: no');
+  }
 
   // 2. Variables
   const vc = parseVariablesContainer(xml);
@@ -736,16 +755,24 @@ export async function bwQueryData(
   variables?: VariableInput[],
   fromRow: number = 0,
   toRow: number = 1000,
-  drillOperations?: DrillOperation[]
+  drillOperations?: DrillOperation[],
+  withStatistics = false,
 ): Promise<string> {
+  const started = new Date();
   const effectiveCompId = isProvider ? `!${compId}` : compId;
+  // The text answer asks for one row more than the page, to say whether the result continues.
+  const probed = format === 'text';
+  const requestToRow = probed ? toRow + 1 : toRow;
   const url = `/sap/bw/modeling/comp/reporting?compid=${encodeURIComponent(effectiveCompId)}`;
   const isPost = !!(state || variables || (drillOperations && drillOperations.length > 0));
 
   let responseXml: string;
+  let requestBytes = 0;
+  const httpStart = Date.now();
 
   if (isPost) {
     const postBody = buildPostBody(compId, state, variables, drillOperations);
+    requestBytes = Buffer.byteLength(postBody);
     const doPost = async (): Promise<string> => {
       const csrfToken = await client.getCsrfToken();
       const postResult = await client.rawPost(url, postBody, {
@@ -757,7 +784,7 @@ export async function bwQueryData(
         InclObjectValues: 'true',
         HryLvlAbsRs: 'false',
         FromRow: String(fromRow),
-        ToRow: String(toRow),
+        ToRow: String(requestToRow),
         'X-sap-adt-sessiontype': 'stateless',
       });
       return postResult.body;
@@ -783,14 +810,39 @@ export async function bwQueryData(
       CompactMode: 'false',
       HryLvlAbsRs: 'false',
       FromRow: String(fromRow),
-      ToRow: String(toRow),
+      ToRow: String(requestToRow),
       'X-sap-adt-sessiontype': 'stateless',
     });
     responseXml = body;
   }
 
-  if (format === 'raw') return responseXml;
-  return renderQueryDataText(responseXml, !isPost, state ? notApplied(state, responseXml) : []);
+  const httpMs = Date.now() - httpStart;
+
+  const renderStart = Date.now();
+  const rendered =
+    format === 'raw'
+      ? responseXml
+      : renderQueryDataText(responseXml, !isPost, state ? notApplied(state, responseXml) : [], { fromRow, toRow, probed });
+  if (!withStatistics) return rendered;
+
+  const finished = new Date();
+  const user = await resolveLogonUser(client).catch(() => undefined);
+  const stats = await statisticsForCall(
+    client,
+    statObjectName(compId, isProvider),
+    {
+      started,
+      finished,
+      httpMs,
+      requestBytes,
+      responseBytes: Buffer.byteLength(responseXml),
+      renderMs: format === 'raw' ? undefined : Date.now() - renderStart,
+    },
+    user,
+  );
+  return format === 'raw'
+    ? `${rendered}\n<!--\n${stats.join('\n').replace(/--/g, '- -')}\n-->`
+    : `${rendered}\n\n${stats.join('\n')}`;
 }
 
 export async function bwGetFilterValues(
