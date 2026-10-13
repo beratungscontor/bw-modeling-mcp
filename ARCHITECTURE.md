@@ -208,6 +208,9 @@ src/
     │                     # bw_update_structure, bw_update_variable — the reusable query
     │                     # components, each on its own resource, written read-modify-write
     ├── dtp.ts            # bw_get_dtp, bw_get_dtps, bw_create_dtp, bw_run_dtp, bw_update_dtp, bw_set_dtp_filter_routine
+    ├── hierarchy.ts      # bw_get_hierarchy, bw_create_hierarchy, bw_update_hierarchy,
+    │                     # bw_delete_hierarchy — BW/4HANA data API, nodes as change log,
+    │                     # each write in a logon of its own
     ├── infoarea.ts       # bw_get_infoarea, bw_create_infoarea, bw_move_object
     ├── infoobject.ts     # bw_get_infoobject, bw_create_infoobject, bw_update_infoobject
     ├── infosource.ts     # bw_get_infosource, bw_create_infosource, bw_update_infosource
@@ -396,6 +399,35 @@ system serves a lower resource version than the fallback.
 | Run steps | `GET /sap/opu/odata/sap/BW4_PCM_SRV/ChainProcessSet` |
 | Run messages | `GET /sap/opu/odata/sap/BW4_PCM_SRV/ChainProcessLogSet` |
 | Status code texts | `GET /sap/opu/odata/sap/RV_C_PCMLOG_CDS/Rv_I_Rsvpcm_State` |
+
+### Hierarchy Endpoints
+
+The BW/4HANA data API, the service behind the hierarchy maintenance app. Every request, a GET
+included, needs `Content-Type: application/json` and `Accept: */*` — anything else is answered 415.
+The CSRF token comes from `GET /sap/bc/http/sap/bw4/v1/system/ping`.
+
+| Purpose | Endpoint |
+|---|---|
+| Hierarchies of a characteristic | `GET /sap/bc/http/sap/bw4/v1/data/infoobjects/{iobj}/hierarchies` |
+| Header, texts, levels | `GET /sap/bc/http/sap/bw4/v1/data/hierarchies/{hieid}/versions/{A\|M}` |
+| Nodes | `GET /sap/bc/http/sap/bw4/v1/data/hierarchies/{hieid}/versions/{A\|M}/content?depth=99` |
+| Create (header) | `POST /sap/bc/http/sap/bw4/v1/data/hierarchies` — `{oHiesel, aHietext, oHiedir}` |
+| Save header | `PUT .../versions/{A\|M}` with `If-Match` — on the active version this opens the revised one |
+| Save nodes | `PUT .../versions/M/content` with `If-Match` — a change log, see below |
+| Activate | `POST .../versions/M/activate` |
+| Delete | `DELETE .../versions/{A\|M}` |
+
+**Nodes are written as the app's change log.** Each node is first inserted (`ACTION: "I"`) without
+child and next links, then changed (`"C"`) to its final links; removed nodes are `"D"` records. Node
+ids, levels and links are plain numbers. A tree sent as finished rows with zero-padded ids was not
+rejected — it kept the handler running in its work process until it was cancelled.
+
+**Each write runs in a logon of its own, ended afterwards.** Creating a hierarchy leaves an
+enqueue on `RSHIEDIR` that the API does not release, and that closing the session context
+(`sap-sessioncmd=close`) does not release either; only the end of the logon does. Left in place, the
+hierarchy stays locked for every other session until the logon times out. A separate logon keeps
+the logoff from ending the session the modeling calls run in. In cookie mode there is no logon of the
+server's own to end, so the logoff is skipped there.
 
 ### Runtime / Request Monitor Endpoints
 

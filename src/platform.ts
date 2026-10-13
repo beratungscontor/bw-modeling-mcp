@@ -305,6 +305,12 @@ const BW4_ONLY: Record<string, string> = {
   bw_push_data: 'the BW/4HANA push API (/sap/bw4/v1/push)',
   bw_get_push_schema: 'the BW/4HANA push API (/sap/bw4/v1/push)',
 
+  // Hierarchies — /sap/bc/http/sap/bw4/v1/data/hierarchies.
+  bw_get_hierarchy: 'the BW/4HANA data API (/sap/bc/http/sap/bw4/v1/data)',
+  bw_create_hierarchy: 'the BW/4HANA data API (/sap/bc/http/sap/bw4/v1/data)',
+  bw_update_hierarchy: 'the BW/4HANA data API (/sap/bc/http/sap/bw4/v1/data)',
+  bw_delete_hierarchy: 'the BW/4HANA data API (/sap/bc/http/sap/bw4/v1/data)',
+
   // Process variants — /sap/bw4/v1/modeling/processtypes.
   bw_get_process_variant: 'the BW/4HANA process type API (/sap/bw4/v1/modeling/processtypes)',
 

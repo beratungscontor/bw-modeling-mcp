@@ -59,6 +59,7 @@ const READ_TOOLS = new Set([
   'bw_get_process_chain_run_detail',
   'bw_get_process_variant',
   'bw_get_push_schema',
+  'bw_get_hierarchy',
   'bw_get_query',
   'bw_get_query_roles',
   'bw_get_remodeling_request',

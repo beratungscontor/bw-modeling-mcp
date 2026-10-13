@@ -1,6 +1,6 @@
 # Tools Reference
 
-Every tool the server exposes — 110 in total — with what it does and the parameters that matter.
+Every tool the server exposes — 114 in total — with what it does and the parameters that matter.
 Tools marked _(Read only)_ change nothing in BW; everything else writes, activates, runs, or unlocks.
 A writing tool refuses a parameter it does not declare and names the ones it takes, so a misspelt
 parameter cannot be reported as applied.
@@ -14,7 +14,7 @@ For the architecture and the full endpoint list, see [ARCHITECTURE.md](ARCHITECT
 
 - [Discovery & System](#discovery--system) — 6 tools
 - [aDSO](#adso) — 3 tools
-- [InfoObject](#infoobject) — 3 tools
+- [InfoObject & Hierarchies](#infoobject--hierarchies) — 7 tools
 - [InfoArea, Packages & Transports](#infoarea-packages--transports) — 6 tools
 - [InfoSource](#infosource) — 3 tools
 - [Transformation](#transformation) — 8 tools
@@ -87,7 +87,7 @@ Field groups: `dimension` takes the bare group name — `"__KEYFIGURES"`, `"DATA
 
 ---
 
-## InfoObject
+## InfoObject & Hierarchies
 
 ### `bw_get_infoobject`
 Read an InfoObject definition (Characteristic or Key Figure).
@@ -110,6 +110,28 @@ Characteristic; set `fixed_unit` / `fixed_currency` on a Key Figure. Supplying `
 replaces the whole list (`[]` removes all of them); omitting it leaves the attributes untouched.
 The lower case flag can be changed on a characteristic that is already used by a provider holding
 data — a request that failed activation on such a value can then be activated again.
+
+### `bw_get_hierarchy` _(Read only)_
+Without `hierarchy_name`, the hierarchies of a characteristic with version, validity, levels and node
+count. With it, the tree: every node with its type (text node or characteristic value), name, text and
+node id, indented by level. The tool to find the node to filter on in `bw_query_data`, and to read a
+tree before changing it. BW/4HANA only.
+
+### `bw_create_hierarchy`
+Create a hierarchy for a characteristic with hierarchies switched on and activate it. The tree is passed
+nested: a text node `{ "text_node": "NAME", "text": "...", "children": [...] }` groups other nodes, a
+value node `{ "value": "..." }` is a value of the characteristic and may have children of its own. Each
+node appears once in a hierarchy. `activate: false` keeps it as revised version. Hierarchies that are
+neither time- nor version-dependent. BW/4HANA only.
+
+### `bw_update_hierarchy`
+Change the description and/or the tree of a hierarchy, then activate it. The tree is replaced as a
+whole: read it with `bw_get_hierarchy`, change it, and pass the complete new tree in the form
+`bw_create_hierarchy` takes. The hierarchy keeps its id, so the queries that use it keep working.
+BW/4HANA only.
+
+### `bw_delete_hierarchy`
+Delete a hierarchy, or with `version: "M"` only a pending revised version of it. BW/4HANA only.
 
 ---
 

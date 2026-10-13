@@ -36,6 +36,13 @@ import { bwCreateInfoArea, bwMoveObject, bwGetInfoarea } from './tools/infoarea.
 import { bwChangePackage, bwListChangeableTransports } from './tools/cto.js';
 import { bwCreateInfosource, bwUpdateInfosource, bwGetInfosource, InfosourceField } from './tools/infosource.js';
 import { bwPushData, bwGetPushSchema } from './tools/push.js';
+import {
+  bwGetHierarchy,
+  bwCreateHierarchy,
+  bwUpdateHierarchy,
+  bwDeleteHierarchy,
+  type HierarchyNodeInput,
+} from './tools/hierarchy.js';
 import { bwGetQuery, bwCreateQuery } from './tools/query.js';
 import { bwCreateVariable, CreateVariableArgs, type FormulaDimension } from './tools/variable.js';
 import { bwUpdateQueryLayout, bwUpdateQueryFilter, bwUpdateQueryKeyFigures, bwUpdateQuerySettings, EXCEPTION_AGGREGATION_TYPES, LayoutOperation, FilterOperation, KeyFigureOperation, UpdateQuerySettingsArgs } from './tools/query_update.js';
@@ -2022,6 +2029,84 @@ const TOOL_DEFINITIONS = [
           },
         },
         required: ['dtp_name'],
+      },
+    },
+    {
+      name: 'bw_get_hierarchy',
+      description:
+        'Read the hierarchies of a characteristic. Without hierarchy_name: the hierarchies the characteristic ' +
+        'has, with version, validity, levels and node count. With hierarchy_name: the tree — every node with its ' +
+        'type (text node or characteristic value), name, text and node id, indented by level. Use it to find the ' +
+        'node to filter on in bw_query_data, and to read a tree before changing it with bw_update_hierarchy.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          characteristic: { type: 'string', description: 'Characteristic the hierarchies belong to (e.g. "CHARACTERISTIC").' },
+          hierarchy_name: { type: 'string', description: 'Hierarchy to read. Omit to list the hierarchies of the characteristic.' },
+          version: { type: 'string', enum: ['A', 'M'], description: 'A = active (default where it exists), M = revised version.' },
+          format: { type: 'string', enum: ['text', 'raw'], description: '"text" (default) or "raw" for the JSON of the API.' },
+        },
+        required: ['characteristic'],
+      },
+    },
+    {
+      name: 'bw_create_hierarchy',
+      description:
+        'Create a hierarchy for a characteristic and activate it. The tree is passed nested: a text node ' +
+        '{ "text_node": "NAME", "text": "...", "children": [...] } groups other nodes; a value node { "value": "..." } ' +
+        'is a value of the characteristic (it may have children too). Each node appears once. The characteristic ' +
+        'must have hierarchies switched on. Not time-dependent and not version-dependent hierarchies only.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          characteristic: { type: 'string', description: 'Characteristic with hierarchies switched on (e.g. "CHARACTERISTIC").' },
+          hierarchy_name: { type: 'string', description: 'Name of the new hierarchy (e.g. "HIERARCHY_NAME").' },
+          description: { type: 'string', description: 'Description of the hierarchy (up to 60 characters).' },
+          nodes: {
+            type: 'array',
+            description: 'Top-level nodes of the tree, each { text_node, text?, children? } or { value, children? }.',
+            items: { type: 'object' },
+          },
+          activate: { type: 'boolean', description: 'Activate after saving (default true); false keeps it as revised version.' },
+        },
+        required: ['characteristic', 'hierarchy_name', 'description', 'nodes'],
+      },
+    },
+    {
+      name: 'bw_update_hierarchy',
+      description:
+        'Change a hierarchy: its description and/or its tree, then activate it. The tree is replaced as a whole, ' +
+        'not merged — read it with bw_get_hierarchy, change it, and pass the complete new tree in the same nested ' +
+        'form bw_create_hierarchy takes. The hierarchy keeps its id, so queries that use it keep working.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          characteristic: { type: 'string', description: 'Characteristic the hierarchy belongs to.' },
+          hierarchy_name: { type: 'string', description: 'Hierarchy to change.' },
+          description: { type: 'string', description: 'New description (up to 60 characters).' },
+          nodes: {
+            type: 'array',
+            description: 'The complete new tree, as in bw_create_hierarchy. Replaces every node the hierarchy has now.',
+            items: { type: 'object' },
+          },
+          activate: { type: 'boolean', description: 'Activate after saving (default true); false keeps the change as revised version.' },
+        },
+        required: ['characteristic', 'hierarchy_name'],
+      },
+    },
+    {
+      name: 'bw_delete_hierarchy',
+      description:
+        'Delete a hierarchy of a characteristic. Deletes the active version unless version "M" is given, which ' +
+        'discards only a pending revised version. A query that uses the hierarchy no longer finds it.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          characteristic: { type: 'string', description: 'Characteristic the hierarchy belongs to.' },
+          hierarchy_name: { type: 'string', description: 'Hierarchy to delete.' },
+          version: { type: 'string', enum: ['A', 'M'], description: 'A = the hierarchy (default), M = only its revised version.' },
+        },
+        required: ['characteristic', 'hierarchy_name'],
       },
     },
     {
@@ -6043,6 +6128,43 @@ async function handleToolCall(
 
       case 'bw_get_push_schema':
         text = await bwGetPushSchema(client, args?.adso_name as string);
+        break;
+
+      case 'bw_get_hierarchy':
+        text = await bwGetHierarchy(client, {
+          characteristic: args?.characteristic as string,
+          hierarchy_name: args?.hierarchy_name as string | undefined,
+          version: args?.version as 'A' | 'M' | undefined,
+          format: args?.format as 'text' | 'raw' | undefined,
+        });
+        break;
+
+      case 'bw_create_hierarchy':
+        text = await bwCreateHierarchy(client, {
+          characteristic: args?.characteristic as string,
+          hierarchy_name: args?.hierarchy_name as string,
+          description: args?.description as string,
+          nodes: args?.nodes as HierarchyNodeInput[],
+          activate: args?.activate as boolean | undefined,
+        });
+        break;
+
+      case 'bw_update_hierarchy':
+        text = await bwUpdateHierarchy(client, {
+          characteristic: args?.characteristic as string,
+          hierarchy_name: args?.hierarchy_name as string,
+          description: args?.description as string | undefined,
+          nodes: args?.nodes as HierarchyNodeInput[] | undefined,
+          activate: args?.activate as boolean | undefined,
+        });
+        break;
+
+      case 'bw_delete_hierarchy':
+        text = await bwDeleteHierarchy(client, {
+          characteristic: args?.characteristic as string,
+          hierarchy_name: args?.hierarchy_name as string,
+          version: args?.version as 'A' | 'M' | undefined,
+        });
         break;
 
       case 'bw_push_data':

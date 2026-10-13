@@ -390,6 +390,17 @@ export class BwClient {
   }
 
   /**
+   * End this client's logon on the server, which ends every context it holds and the locks in
+   * them. Meant for a session of its own (see freshSession) whose work leaves an enqueue that
+   * only the end of the logon releases. Not done in cookie mode: the cookies belong to a browser
+   * logon the server merely borrows, and ending it would cut the server off.
+   */
+  async logoff(): Promise<void> {
+    if (this.opts.auth.kind === 'cookies') return;
+    await this.rawGet('/sap/public/bc/icf/logoff', { Accept: '*/*' }).catch(() => {/* best effort */});
+  }
+
+  /**
    * Who this client acts as. Two clients sharing it reach BW as the same user, which is
    * what makes it safe to hand one client's lock to the other — and what keeps a
    * multi-user deployment from ever touching someone else's session.
@@ -1087,15 +1098,24 @@ export class BwClient {
     headers: Record<string, string>
   ): Promise<{ body: string; headers: Record<string, string> }> {
     await this.ensureCsrf();
-    const response = await this.http.get(url, {
-      headers: {
-        'X-CSRF-Token': this.csrfToken!,
-        ...this.cookieHeaders(),
-        ...headers,
-      },
-      responseType: 'text',
-      transformResponse: [(data) => data],
-    });
+    const send = () =>
+      this.http.get(url, {
+        headers: {
+          'X-CSRF-Token': this.csrfToken!,
+          ...this.cookieHeaders(),
+          ...headers,
+        },
+        responseType: 'text',
+        transformResponse: [(data) => data],
+      });
+    // Retried once on a dead socket, as in get().
+    let response;
+    try {
+      response = await send();
+    } catch (err) {
+      if (!BwClient.isTransportError(err)) throw err;
+      response = await send();
+    }
     this.updateCookies(response);
     if (response.status >= 400) {
       throw bwHttpError(`GET ${url}`, response.status, response.data);
