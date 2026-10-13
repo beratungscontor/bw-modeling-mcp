@@ -38,6 +38,15 @@ test('an HTML page on any other status is reported as unreachable, not as data',
   assert.match(err.message, /titled "Logon Error Message"/);
 });
 
+test('a runtime error page is reported as a failure on the server, not as an inactive service', () => {
+  const page = '<html><head><title>Application Server Error</title></head><body><p>500 Internal Server Error</p></body></html>';
+  const err = bwHttpError('GET /sap/bw/modeling/plcr/x/a', 500, page);
+  assert.match(err.message, /HTTP 500/);
+  assert.match(err.message, /runtime error on the server/);
+  assert.match(err.message, /ST22/);
+  assert.ok(!/ICF service inactive/.test(err.message));
+});
+
 test('an ADT exception document is passed through unchanged', () => {
   // Callers parse this XML, and several decisions in this server are made on its text.
   const xml =

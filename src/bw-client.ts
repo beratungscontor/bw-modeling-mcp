@@ -218,6 +218,14 @@ export function bwHttpError(label: string, status: number, data: unknown): Error
   // page "Logon Error Message" whatever went wrong, so it is quoted as the server's wording
   // rather than presented as the cause.
   const title = body.match(/<title>([^<]*)<\/title>/i)?.[1]?.trim();
+  // A runtime error in the handler: the service was reached and failed, so naming an
+  // inactive service would send the caller to the wrong place.
+  if (status >= 500 && title && !/Logon Error/i.test(title)) {
+    return new Error(
+      `${label} → HTTP ${status}\nBW failed while processing the request — a runtime error on the ` +
+        `server, not a missing service; transaction ST22 shows the short dump. The page is titled "${title}".`,
+    );
+  }
   return new Error(
     `${label} → HTTP ${status}\nThe server returned an HTML page instead of an API response — ` +
       'the service is not reachable for this user (ICF service inactive, or the logon was ' +

@@ -210,9 +210,14 @@ function parseAggLevelXml(xml: string, status: string): AggLevelInfo {
   return { name, description, status, infoArea, package: tlogoPkg, infoProvider, characteristics, keyfigures };
 }
 
-export async function bwGetAggregationLevel(client: BwClient, alvlName: string): Promise<string> {
+export async function bwGetAggregationLevel(
+  client: BwClient,
+  alvlName: string,
+  format: 'text' | 'raw' = 'text',
+): Promise<string> {
   const path = `/sap/bw/modeling/alvl/${bwSeg(alvlName)}/m`;
   const result = await client.get(path, MEDIA_TYPES['alvl']);
+  if (format === 'raw') return result.body;
   const status = result.headers['object_status'] ?? result.headers['OBJECT_STATUS'] ?? 'unknown';
 
   const info = parseAggLevelXml(result.body, status);
@@ -281,8 +286,6 @@ export async function bwGetAggregationLevel(client: BwClient, alvlName: string):
       }
     }
   }
-
-  lines.push('', `── Raw XML ──`, result.body);
 
   return lines.join('\n');
 }
@@ -798,9 +801,23 @@ function parsePlcrXml(xml: string, status: string): PlanningPropertiesInfo {
   };
 }
 
-export async function bwGetPlanningProperties(client: BwClient, providerName: string): Promise<string> {
+export async function bwGetPlanningProperties(
+  client: BwClient,
+  providerName: string,
+  format: 'text' | 'raw' = 'text',
+): Promise<string> {
   const path = `/sap/bw/modeling/plcr/${bwSeg(providerName)}/a`;
-  const result = await client.get(path, MEDIA_TYPES['plcr']);
+  const result = await client.get(path, MEDIA_TYPES['plcr']).catch((err: Error) => {
+    // Seen for providers with an exit data slice: the resource fails to build, the tables are fine.
+    if (/HTTP 5\d\d/.test(err.message)) {
+      throw new Error(
+        `${err.message}\nbw_read_metadata_tables with object_type "PLCR" (characteristic relationships) ` +
+          `or "PLDS" (data slices) reads the planning properties of ${providerName} from the tables instead.`,
+      );
+    }
+    throw err;
+  });
+  if (format === 'raw') return result.body;
   const status = result.headers['object_status'] ?? result.headers['OBJECT_STATUS'] ?? 'unknown';
 
   const info = parsePlcrXml(result.body, status);
@@ -831,8 +848,6 @@ export async function bwGetPlanningProperties(client: BwClient, providerName: st
     lines.push(`  Save strategy:    (not configured)`);
   }
 
-  lines.push('', `── Raw XML ──`, result.body);
-
   return lines.join('\n');
 }
 
@@ -861,7 +876,7 @@ function parsePlsqXml(xml: string, status: string): PlsqInfo {
   }
   const name = attr(rootMatch[1], 'name');
 
-  const description = xml.match(/<description\b[^>]*\blabel="([^"]*)"/)?.[1] ?? '';
+  const description = decodeXmlEntities(xml.match(/<description\b[^>]*\blabel="([^"]*)"/)?.[1] ?? '');
   const tlogoPkg = xml.match(/<adtcore:packageRef\b[^>]*\bname="([^"]*)"/)?.[1] ?? '';
   const infoArea = stripInfoAreaSentinel(xml.match(/<infoArea[^>]*>([^<]+)<\/infoArea>/)?.[1]?.trim() ?? '');
 
@@ -887,9 +902,21 @@ function parsePlsqXml(xml: string, status: string): PlsqInfo {
   return { name, description, status, infoArea, package: tlogoPkg, steps };
 }
 
-export async function bwGetPlanningSequence(client: BwClient, seqName: string): Promise<string> {
+/** RSPLS_STEPTYPE: a type-1 step only opens its filter for input; a type-2 step runs a function. */
+export function stepTypeText(type: string): string {
+  if (type === '1') return 'Manual input (input template: the filter only, no function)';
+  if (type === '2') return 'Planning function';
+  return `[type ${type}]`;
+}
+
+export async function bwGetPlanningSequence(
+  client: BwClient,
+  seqName: string,
+  format: 'text' | 'raw' = 'text',
+): Promise<string> {
   const path = `/sap/bw/modeling/plsq/${bwSeg(seqName)}/a`;
   const result = await client.get(path, MEDIA_TYPES['plsq']);
+  if (format === 'raw') return result.body;
   const status = result.headers['object_status'] ?? result.headers['OBJECT_STATUS'] ?? 'unknown';
 
   const info = parsePlsqXml(result.body, status);
@@ -909,14 +936,12 @@ export async function bwGetPlanningSequence(client: BwClient, seqName: string): 
   } else {
     for (let i = 0; i < info.steps.length; i++) {
       const s = info.steps[i];
-      lines.push(`  ${i + 1}. [type ${s.type}]`);
+      lines.push(`  ${i + 1}. ${stepTypeText(s.type)}`);
       if (s.alvl) lines.push(`       Aggregation Level: ${s.alvl}`);
       if (s.planningService) lines.push(`       Planning Function: ${s.planningService}`);
       if (s.filterName) lines.push(`       Filter:            ${s.filterName}`);
     }
   }
-
-  lines.push('', `── Raw XML ──`, result.body);
 
   return lines.join('\n');
 }
@@ -1232,9 +1257,9 @@ function parsePlseXml(xml: string, status: string): PlseInfo {
   const dotAlvl = alvlRaw.indexOf('.');
   const alvl = dotAlvl >= 0 ? alvlRaw.slice(0, dotAlvl) : alvlRaw;
 
-  const documentation = attr(rootAttrs, 'documentation');
+  const documentation = decodeDocumentation(attr(rootAttrs, 'documentation'));
 
-  const description = xml.match(/<description\b[^>]*\blabel="([^"]*)"/)?.[1] ?? '';
+  const description = decodeXmlEntities(xml.match(/<description\b[^>]*\blabel="([^"]*)"/)?.[1] ?? '');
   const tlogoPkg = xml.match(/<adtcore:packageRef\b[^>]*\bname="([^"]*)"/)?.[1] ?? '';
   const infoArea = stripInfoAreaSentinel(xml.match(/<infoArea[^>]*>([^<]+)<\/infoArea>/)?.[1]?.trim() ?? '');
 
@@ -1270,9 +1295,27 @@ function parsePlseXml(xml: string, status: string): PlseInfo {
   return { name, description, planningServiceType, alvl, documentation, status: resolvedStatus, infoArea, package: tlogoPkg, charUsages, rules };
 }
 
-export async function bwGetPlanningFunction(client: BwClient, funcName: string): Promise<string> {
+/**
+ * The backend escapes a planning function's documentation twice before writing it into the
+ * attribute, so its line breaks arrive as `&amp;amp;#xD;&amp;amp;#xA;`.
+ */
+export function decodeDocumentation(value: string): string {
+  let text = value;
+  for (let i = 0; i < 3 && /&(?:amp|lt|gt|quot|apos);/.test(text); i++) text = decodeXmlEntities(text);
+  return text
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(Number(dec)))
+    .replace(/\r\n?/g, '\n');
+}
+
+export async function bwGetPlanningFunction(
+  client: BwClient,
+  funcName: string,
+  format: 'text' | 'raw' = 'text',
+): Promise<string> {
   const path = `/sap/bw/modeling/plse/${bwSeg(funcName)}/a`;
   const result = await client.get(path, MEDIA_TYPES['plse']);
+  if (format === 'raw') return result.body;
   const headerStatus = result.headers['object_status'] ?? result.headers['OBJECT_STATUS'] ?? '';
 
   const info = parsePlseXml(result.body, headerStatus);
@@ -1345,8 +1388,6 @@ export async function bwGetPlanningFunction(client: BwClient, funcName: string):
       lines.push(...formatPlseParameters(rule.parameters, multiRule ? 2 : 1));
     });
   }
-
-  lines.push('', `── Raw XML ──`, result.body);
 
   return lines.join('\n');
 }

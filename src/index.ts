@@ -4516,6 +4516,11 @@ const TOOL_DEFINITIONS = [
             type: 'string',
             description: 'Technical name of the Aggregation Level (e.g. "OBJECT_NAME").',
           },
+          format: {
+            type: 'string',
+            enum: ['text', 'raw'],
+            description: '"text" (default): readable summary. "raw": the unmodified XML.',
+          },
         },
         required: ['aggregation_level_name'],
       },
@@ -4637,6 +4642,11 @@ const TOOL_DEFINITIONS = [
             type: 'string',
             description: 'Technical name of the Planning Function (e.g. "OBJECT_NAME").',
           },
+          format: {
+            type: 'string',
+            enum: ['text', 'raw'],
+            description: '"text" (default): readable summary. "raw": the unmodified XML.',
+          },
         },
         required: ['planning_function_name'],
       },
@@ -4706,7 +4716,7 @@ const TOOL_DEFINITIONS = [
       description:
         'Read a Planning Sequence (TLOGO PLSQ) definition — an ordered list of planning steps ' +
         'for Integrated Planning / embedded BPC. Returns name, description, InfoArea, package, ' +
-        'status, and the ordered step list. Each step shows its type code, the aggregation level, ' +
+        'status, and the ordered step list. Each step shows its kind (planning function, or manual input: an input template that only opens its filter), the aggregation level, ' +
         'the planning function (planning service), and the filter name.',
       inputSchema: {
         type: 'object',
@@ -4714,6 +4724,11 @@ const TOOL_DEFINITIONS = [
           planning_sequence_name: {
             type: 'string',
             description: 'Technical name of the Planning Sequence (e.g. "OBJECT_NAME").',
+          },
+          format: {
+            type: 'string',
+            enum: ['text', 'raw'],
+            description: '"text" (default): readable summary. "raw": the unmodified XML.',
           },
         },
         required: ['planning_sequence_name'],
@@ -4734,6 +4749,11 @@ const TOOL_DEFINITIONS = [
             type: 'string',
             description: 'Technical name of the plan-enabled InfoProvider (e.g. "OBJECT_NAME"). ' +
               'The PLCR object shares this name.',
+          },
+          format: {
+            type: 'string',
+            enum: ['text', 'raw'],
+            description: '"text" (default): readable summary. "raw": the unmodified XML.',
           },
         },
         required: ['plan_provider_name'],
@@ -6724,11 +6744,11 @@ async function handleToolCall(
         break;
 
       case 'bw_get_aggregation_level':
-        text = await bwGetAggregationLevel(client, args?.aggregation_level_name as string);
+        text = await bwGetAggregationLevel(client, args?.aggregation_level_name as string, (args?.format as 'text' | 'raw') ?? 'text');
         break;
 
       case 'bw_get_planning_function':
-        text = await bwGetPlanningFunction(client, args?.planning_function_name as string);
+        text = await bwGetPlanningFunction(client, args?.planning_function_name as string, (args?.format as 'text' | 'raw') ?? 'text');
         break;
 
       case 'bw_update_planning_function':
@@ -6762,11 +6782,11 @@ async function handleToolCall(
         break;
 
       case 'bw_get_planning_sequence':
-        text = await bwGetPlanningSequence(client, args?.planning_sequence_name as string);
+        text = await bwGetPlanningSequence(client, args?.planning_sequence_name as string, (args?.format as 'text' | 'raw') ?? 'text');
         break;
 
       case 'bw_get_planning_properties':
-        text = await bwGetPlanningProperties(client, args?.plan_provider_name as string);
+        text = await bwGetPlanningProperties(client, args?.plan_provider_name as string, (args?.format as 'text' | 'raw') ?? 'text');
         break;
 
       case 'bw_list_process_chain_runs':
