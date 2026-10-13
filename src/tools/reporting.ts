@@ -23,7 +23,26 @@ export interface InfoObjectState {
     op?: string;
     sign?: string;
     nodeId?: number;
+    /** InfoObject of a hierarchy node: 0HIER_NODE for a text node, else the characteristic. */
+    nodeType?: string;
   }>;
+}
+
+/**
+ * The node type a filter value goes out with, or undefined for a plain member.
+ *
+ * The reporting endpoint selects a hierarchy node only through the `nodeName` attribute of a
+ * selectValue, which it looks up among the node types of the query's hierarchy; `nodeId` is
+ * read and not used. A value sent with nodeId=1 alone is filtered as an ordinary member —
+ * "No data available" for a node key. Without an explicit type, a node is taken to be a
+ * characteristic value: of the characteristic itself, or of the attribute for a navigation
+ * attribute (CHAR__ATTR).
+ */
+export function nodeTypeOf(iobjName: string, fv: { nodeId?: number; nodeType?: string }): string | undefined {
+  if (fv.nodeType) return fv.nodeType;
+  if (fv.nodeId !== 1) return undefined;
+  const sep = iobjName.lastIndexOf('__');
+  return sep >= 0 ? iobjName.slice(sep + 2) : iobjName;
 }
 
 export interface DrillOperation {
@@ -396,7 +415,7 @@ function tupleLabel(values: TupleValue[]): string {
   }).filter(s => s).join(' / ');
 }
 
-function renderQueryDataText(xml: string, isGet: boolean): string {
+function renderQueryDataText(xml: string, isGet: boolean, findings: string[] = []): string {
   const lines: string[] = [];
 
   // 1. Header
@@ -479,6 +498,12 @@ function renderQueryDataText(xml: string, isGet: boolean): string {
     }
   }
 
+  if (findings.length > 0) {
+    lines.push('');
+    lines.push('── Not applied ──');
+    for (const f of findings) lines.push(`  ${f}`);
+  }
+
   // 5. Messages
   const msgs = parseMessages(xml);
   if (msgs.length > 0) {
@@ -511,9 +536,109 @@ function renderQueryDataText(xml: string, isGet: boolean): string {
   return lines.join('\n');
 }
 
+// ── What BW did not apply ──────────────────────────────────────────────────────
+
+interface AppliedValue {
+  low: string;
+  lowInt: string;
+  high: string;
+  op: string;
+  sign: string;
+}
+
+function infoObjectBlocks(section: string): Array<{ name: string; attrs: string; body: string }> {
+  const out: Array<{ name: string; attrs: string; body: string }> = [];
+  const re = /<infoObject\b([^>]*?)(?:\/>|>([\s\S]*?)<\/infoObject>)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(section)) !== null) {
+    out.push({ name: attr(m[1], 'name') ?? '', attrs: m[1], body: m[2] ?? '' });
+  }
+  return out;
+}
+
+function describeValue(v: { low?: string; lowInt?: string; high?: string; op?: string; sign?: string }): string {
+  const sign = (v.sign ?? 'I') === 'E' ? 'exclude' : 'include';
+  return `${sign} ${v.op ?? 'EQ'} ${v.lowInt || v.low || ''}${v.high ? `..${v.high}` : ''}`;
+}
+
+/**
+ * State requests BW answered differently without an error. The reporting endpoint
+ * quietly rewrites some of them — an excluded hierarchy node comes back included, and the
+ * hierarchy of a state entry is never applied — and only the effective selection and the
+ * state of the response show it.
+ */
+export function notApplied(state: { infoObjects: InfoObjectState[] }, xml: string): string[] {
+  const findings: string[] = [];
+  const responseState = new Map(
+    infoObjectBlocks(xml.match(/<state>([\s\S]*?)<\/state>/)?.[1] ?? '').map((b) => [b.name, b]),
+  );
+  const effectiveXml = xml.match(/<effective>([\s\S]*?)<\/effective>/)?.[1];
+  const effective = new Map<string, AppliedValue[]>();
+  for (const b of infoObjectBlocks(effectiveXml ?? '')) {
+    const values: AppliedValue[] = [];
+    const svRe = /<selectValue\b([^>]*?)\/?>/g;
+    let sv: RegExpExecArray | null;
+    while ((sv = svRe.exec(b.body)) !== null) {
+      values.push({
+        low: attr(sv[1], 'low') ?? '',
+        lowInt: attr(sv[1], 'lowInt') ?? '',
+        high: attr(sv[1], 'highInt') ?? attr(sv[1], 'high') ?? '',
+        op: attr(sv[1], 'op') ?? 'EQ',
+        sign: attr(sv[1], 'sign') ?? 'I',
+      });
+    }
+    effective.set(b.name, values);
+  }
+
+  for (const io of state.infoObjects) {
+    const answered = responseState.get(io.name);
+    if (answered) {
+      const axis = attr(answered.attrs, 'axis');
+      if (axis && axis !== io.axis) findings.push(`${io.name}: axis ${io.axis} was requested, BW placed it on ${axis}.`);
+    }
+    if (io.hierarchy) {
+      const shown = answered ? attr(answered.body.match(/<hierarchy\b([^>]*)/)?.[1] ?? '', 'name') : null;
+      if (shown !== io.hierarchy.name) {
+        findings.push(
+          `${io.name}: hierarchy ${io.hierarchy.name} was requested, BW ${shown ? `uses ${shown}` : 'shows none'}. ` +
+            'The display hierarchy comes from the query definition; change it with bw_update_query_characteristic.',
+        );
+      }
+    }
+
+    // An empty effective selection is not judged: BW leaves it empty when a state filter
+    // meets a query-defined restriction on the same characteristic and nothing is left.
+    if (!io.filterValues?.length || effective.size === 0) continue;
+    const applied = effective.get(io.name);
+    if (!applied) {
+      findings.push(`${io.name}: the requested filter is not in the effective selection.`);
+      continue;
+    }
+    for (const fv of io.filterValues) {
+      const match = fv.lowInt
+        ? applied.find((a) => a.lowInt === fv.lowInt)
+        : applied.find((a) => a.low === fv.low || a.lowInt === fv.low);
+      if (!match) {
+        // An external key may have been converted, so only an internal one is reported missing.
+        if (fv.lowInt) findings.push(`${io.name}: ${describeValue(fv)} was requested and is not in the effective selection.`);
+        continue;
+      }
+      const differs =
+        (fv.sign ?? 'I') !== match.sign || (fv.op ?? 'EQ') !== match.op || (fv.high ?? '') !== (fv.high ? match.high : '');
+      if (differs) {
+        findings.push(
+          `${io.name}: ${describeValue(fv)} was requested, BW applied ` +
+            `${describeValue({ lowInt: match.lowInt || match.low, high: match.high, op: match.op, sign: match.sign })}.`,
+        );
+      }
+    }
+  }
+  return findings;
+}
+
 // ── POST body builder ──────────────────────────────────────────────────────────
 
-function buildPostBody(
+export function buildPostBody(
   compId: string,
   state?: { infoObjects: InfoObjectState[] },
   variables?: VariableInput[],
@@ -562,12 +687,16 @@ function buildPostBody(
           const op = fv.op ?? 'EQ';
           const sign = fv.sign ?? 'I';
           const lowText = fv.lowText ? ` lowText="${xmlEscape(fv.lowText)}"` : '';
-          const high = fv.high ? ` high="${xmlEscape(fv.high)}"` : '';
+          // The upper bound is read in the format of the lower one: with an internal low the
+          // endpoint takes highInt and ignores high, so "BT 01..03" arrived as "BT 01".
+          const high = fv.high ? ` ${fv.lowInt ? 'highInt' : 'high'}="${xmlEscape(fv.high)}"` : '';
           const nodeId = fv.nodeId ?? 0;
+          const nodeType = nodeTypeOf(io.name, fv);
+          const nodeName = nodeType ? ` nodeName="${xmlEscape(nodeType)}"` : '';
           if (fv.lowInt) {
-            parts.push(`        <selectValue id="${svId++}" lowInt="${xmlEscape(fv.lowInt)}"${high} nodeId="${nodeId}" hryMinLvl="0" op="${op}" sign="${sign}" presentationMode="INT"/>`);
+            parts.push(`        <selectValue id="${svId++}" lowInt="${xmlEscape(fv.lowInt)}"${high} nodeId="${nodeId}"${nodeName} hryMinLvl="0" op="${op}" sign="${sign}" presentationMode="INT"/>`);
           } else {
-            parts.push(`        <selectValue id="${svId++}" low="${xmlEscape(fv.low ?? '')}"${lowText}${high} nodeId="${nodeId}" hryMinLvl="0" op="${op}" sign="${sign}" presentationMode="EXT_NC"/>`);
+            parts.push(`        <selectValue id="${svId++}" low="${xmlEscape(fv.low ?? '')}"${lowText}${high} nodeId="${nodeId}"${nodeName} hryMinLvl="0" op="${op}" sign="${sign}" presentationMode="EXT_NC"/>`);
           }
         }
         parts.push(`      </infoObject>`);
@@ -659,7 +788,7 @@ export async function bwQueryData(
   }
 
   if (format === 'raw') return responseXml;
-  return renderQueryDataText(responseXml, !isPost);
+  return renderQueryDataText(responseXml, !isPost, state ? notApplied(state, responseXml) : []);
 }
 
 export async function bwGetFilterValues(

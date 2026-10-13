@@ -496,6 +496,65 @@ function parseDimElement(
   return result;
 }
 
+export interface DimHierarchy {
+  name?: string;
+  variable?: string;
+  active: boolean;
+  version?: string;
+  keyDate?: string;
+  options: string[];
+}
+
+/**
+ * The display hierarchy of a layout characteristic, or undefined when none is assigned.
+ * Expects a block parsed with parseTagValue off: hierarchy names and key dates are
+ * strings such as "0001" or "00000000" that a value-parsing pass turns into numbers.
+ */
+export function parseDimHierarchy(
+  hier: Record<string, unknown> | undefined,
+  variableMap: Map<string, { technicalName: string }>,
+): DimHierarchy | undefined {
+  if (!hier || typeof hier !== 'object') return undefined;
+  const param = (tag: string): { value: string; type: string } | undefined => {
+    const el = hier[`Qry:${tag}`] as Record<string, unknown> | undefined;
+    if (!el || typeof el !== 'object' || el['Qry:value'] === undefined) return undefined;
+    return { value: String(el['Qry:value']), type: String(el['Qry:type'] ?? 'Value') };
+  };
+  const name = param('name');
+  if (!name || name.value === '') return undefined;
+  const result: DimHierarchy = { active: hier['@_active'] === 'true', options: [] };
+  if (name.type === 'Variable') result.variable = variableMap.get(name.value)?.technicalName ?? name.value;
+  else result.name = name.value;
+  const version = param('version');
+  if (version && version.value !== '') result.version = version.value;
+  const dateTo = param('dateTo');
+  if (dateTo && dateTo.value !== '') result.keyDate = dateTo.value;
+
+  const explicit = (tag: string): Record<string, unknown> | undefined => {
+    const el = hier[`Qry:${tag}`] as Record<string, unknown> | undefined;
+    return el && typeof el === 'object' && el['@_default'] === 'false' ? el : undefined;
+  };
+  const level = explicit('expandToLevel');
+  if (level?.['@_level']) result.options.push(`expanded to level ${Number(level['@_level'])}`);
+  const position = explicit('positionOfChildNodes');
+  if (position) result.options.push(`child nodes ${position['@_up'] === 'true' ? 'above' : 'below'}`);
+  const postable = explicit('valuesOfPostableNodes');
+  if (postable) result.options.push(`${postable['@_show'] === 'true' ? 'show' : 'hide'} values of postable nodes`);
+  const suppress = explicit('suppressNodes');
+  if (suppress) result.options.push(`single-child nodes ${suppress['@_suppress'] === 'true' ? 'suppressed' : 'shown'}`);
+  const sorting = explicit('sorting');
+  if (sorting?.['@_sortBy']) result.options.push(`sorted by ${sorting['@_sortBy']} ${sorting['@_sortDirection'] ?? 'Ascending'}`);
+  return result;
+}
+
+export function formatDimHierarchy(h: DimHierarchy): string {
+  const parts = [`${h.variable ? `variable ${h.variable}` : h.name} (${h.active ? 'active' : 'assigned, not active'})`];
+  if (h.version) parts.push(`version ${h.version}`);
+  if (h.keyDate) parts.push(`key date ${h.keyDate}`);
+  parts.push(...h.options);
+  return `Hierarchy: ${parts.join(', ')}`;
+}
+
 /**
  * Render the members of a structure as indented lines, one per member, with the
  * child members and inverse formulas nested underneath. Only explicitly set
@@ -671,6 +730,7 @@ function renderQueryText(q: Record<string, unknown>): string {
 
   const dimLine = (d: Record<string, unknown>) => {
     lines.push(`    ${dimLabel(d)}  ${s(d['description'])}  [${s(d['type'])}]`);
+    if (d['hierarchy']) lines.push(`      ${formatDimHierarchy(d['hierarchy'] as DimHierarchy)}`);
     const members = (d['members'] as unknown[]) ?? [];
     if (members.length > 0) renderMemberLines(members, '      ', lines);
   };
@@ -915,8 +975,20 @@ export function parseQueryDocument(
   const rowsRaw = ensureArray(mainComp['Qry:rows']) as Record<string, unknown>[];
   const freeRaw = ensureArray(mainComp['Qry:free']) as Record<string, unknown>[];
 
-  const columns = columnsRaw.map((elem) => parseDimElement(elem, variableMap, ckfMap, rkfMap));
-  const rows = rowsRaw.map((elem) => parseDimElement(elem, variableMap, ckfMap, rkfMap));
+  const literal = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@_',
+    parseTagValue: false,
+    isArray: (tagName) => ['Qry:free', 'Qry:rows', 'Qry:columns'].includes(tagName),
+  }).parse(xmlBody)['Qry:queryResource']?.['Qry:mainComponent'] ?? {};
+  const withHierarchy = (axis: string) => (dim: Record<string, unknown>, i: number) => {
+    const elem = ensureArray(literal[axis])[i] as Record<string, unknown> | undefined;
+    const hierarchy = parseDimHierarchy(elem?.['Qry:hierarchy'] as Record<string, unknown> | undefined, variableMap);
+    return hierarchy ? { ...dim, hierarchy } : dim;
+  };
+
+  const columns = columnsRaw.map((elem) => parseDimElement(elem, variableMap, ckfMap, rkfMap)).map(withHierarchy('Qry:columns'));
+  const rows = rowsRaw.map((elem) => parseDimElement(elem, variableMap, ckfMap, rkfMap)).map(withHierarchy('Qry:rows'));
   const freeCharacteristics = freeRaw.map((elem) => {
     const additionalInfo = elem['Qry:additionalInfo'] as Record<string, unknown> | undefined;
     const kvPairs = ensureArray(additionalInfo?.['Qry:keyValuePairs']) as Record<string, unknown>[];
@@ -927,7 +999,7 @@ export function parseQueryDocument(
     };
     if (infoObjectTypeKv) result['infoObjectType'] = infoObjectTypeKv['@_value'];
     return result;
-  });
+  }).map(withHierarchy('Qry:free'));
 
   // Step 7: Calculated Measures (CKFs only)
   const calculatedMeasures: Record<string, unknown>[] = [];

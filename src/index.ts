@@ -4147,8 +4147,8 @@ const TOOL_DEFINITIONS = [
                     hierarchy: {
                       type: 'object',
                       description:
-                        'Active hierarchy for this characteristic. Required when filtering by hierarchy node (nodeId=1). ' +
-                        'Copy id, name, hryId, hryDateFrom, hryDateTo from the <hierarchy> element in the GET response.',
+                        'Not applied by BW: the display hierarchy always comes from the query definition (bw_get_query shows it; change it with bw_update_query_characteristic), and a different one here is reported under "Not applied". ' +
+                        'Not needed to filter on a hierarchy node.',
                       properties: {
                         id: { type: 'string', description: 'Hierarchy id attribute from GET response.' },
                         name: { type: 'string', description: 'Hierarchy name (technical name).' },
@@ -4170,12 +4170,13 @@ const TOOL_DEFINITIONS = [
                         type: 'object',
                         properties: {
                           low: { type: 'string', description: 'Filter value in external key format (e.g. altName or CHAVL_EXT). Use this for members that have a named external key.' },
-                          lowInt: { type: 'string', description: 'Filter value in internal key format (e.g. GUID like 00O2...). Use when the member has no altName and only an internal GUID is known. Sends presentationMode="INT" in BICS XML.' },
+                          lowInt: { type: 'string', description: 'Filter value in internal key format (e.g. GUID like 00O2...). Use when the member has no altName and only an internal GUID is known, and always for a hierarchy node: the node name as bw_get_hierarchy shows it. Sends presentationMode="INT" in BICS XML.' },
                           lowText: { type: 'string', description: 'Display text for the value (optional).' },
-                          high: { type: 'string', description: 'Upper bound for interval operator BT.' },
+                          high: { type: 'string', description: 'Upper bound for interval operator BT, in the same format as the lower bound (internal with lowInt, external with low).' },
                           op: { type: 'string', description: 'Operator: EQ (default), BT, GT, LT, GE, LE.' },
                           sign: { type: 'string', description: 'I=include (default), E=exclude.' },
-                          nodeId: { type: 'number', description: 'Node selection mode: 0=leaf member (default), 1=hierarchy node (use when filtering a collapsed hierarchy node like a group).' },
+                          nodeId: { type: 'number', description: 'Node selection mode: 0=leaf member (default), 1=hierarchy node of the display hierarchy of the query. Pass the node as lowInt; set nodeType for a text node.' },
+                          nodeType: { type: 'string', description: 'InfoObject of the hierarchy node: "0HIER_NODE" for a text node, otherwise the characteristic (the default with nodeId=1). bw_get_hierarchy shows which a node is. BW turns an excluded node into an included one; that is reported under "Not applied".' },
                         },
                       },
                     },
