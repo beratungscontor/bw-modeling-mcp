@@ -7,6 +7,8 @@ import {
   bwSegUpper,
   stripInfoAreaSentinel,
 } from '../bw-client.js';
+import { RELATION_TYPES, readDataSlices, readPlanningProperties } from './metadata_planning.js';
+import { parseQueryDocument, renderVariablesAndFilter } from './query.js';
 
 function attr(tag: string, attrName: string): string {
   const m = tag.match(new RegExp(`\\b${attrName}="([^"]*)"`));
@@ -749,6 +751,7 @@ interface PlanningPropertiesInfo {
   maxCombinations: string;
   saveStrategySequence?: string;
   saveStrategyDeltaRead?: string;
+  relations: CharacteristicRelation[];
 }
 
 function parsePlcrXml(xml: string, status: string): PlanningPropertiesInfo {
@@ -798,7 +801,53 @@ function parsePlcrXml(xml: string, status: string): PlanningPropertiesInfo {
     maxCombinations,
     saveStrategySequence,
     saveStrategyDeltaRead,
+    relations: parseCharacteristicRelations(xml),
   };
+}
+
+export interface CharacteristicRelation {
+  type: string;
+  active: boolean;
+  derivation: boolean;
+  characteristic: string;
+  exitClass: string;
+  sources: string[];
+  targets: string[];
+}
+
+/** `NAME.composite#///IOBJ` → `IOBJ` */
+const iobjOf = (ref: string) => ref.slice(ref.lastIndexOf('/') + 1);
+
+export function parseCharacteristicRelations(xml: string): CharacteristicRelation[] {
+  return [...xml.matchAll(/<characteristicRelation\b([^>]*)>([\s\S]*?)<\/characteristicRelation>/g)].map((m) => {
+    const constraints = [...m[2].matchAll(/<constraint\b([^>]*)\/?>/g)].map((c) => ({
+      iobj: iobjOf(attr(c[1], 'attribute')),
+      role: attr(c[1], 'role'),
+    }));
+    return {
+      type: attr(m[1], 'type'),
+      active: attr(m[1], 'active') !== 'false',
+      derivation: attr(m[1], 'derivation') === 'true',
+      characteristic: iobjOf(m[2].match(/<characteristic>([^<]*)<\/characteristic>/)?.[1] ?? ''),
+      exitClass: m[2].match(/<exitClass\b[^>]*\bname="([^"]*)"/)?.[1] ?? '',
+      sources: constraints.filter((c) => c.role === 'S').map((c) => c.iobj),
+      targets: constraints.filter((c) => c.role === 'T').map((c) => c.iobj),
+    };
+  });
+}
+
+export function formatCharacteristicRelations(relations: CharacteristicRelation[]): string[] {
+  const lines = [`── Characteristic Relationships (${relations.length}) ──`];
+  if (relations.length === 0) return [...lines, '  (none)'];
+  relations.forEach((r, i) => {
+    lines.push(`  ${i + 1}. ${RELATION_TYPES[r.type] ?? `[type ${r.type}]`}${r.active ? '' : '  (inactive)'}`);
+    if (r.characteristic) lines.push(`       Characteristic: ${r.characteristic}`);
+    if (r.exitClass) lines.push(`       Exit class:     ${r.exitClass}`);
+    lines.push(`       Derivation:     ${r.derivation ? 'yes — target values are derived' : 'no — combinations are only checked'}`);
+    if (r.sources.length > 0) lines.push(`       Source:         ${r.sources.join(', ')}`);
+    if (r.targets.length > 0) lines.push(`       Target:         ${r.targets.join(', ')}`);
+  });
+  return lines;
 }
 
 export async function bwGetPlanningProperties(
@@ -807,16 +856,22 @@ export async function bwGetPlanningProperties(
   format: 'text' | 'raw' = 'text',
 ): Promise<string> {
   const path = `/sap/bw/modeling/plcr/${bwSeg(providerName)}/a`;
-  const result = await client.get(path, MEDIA_TYPES['plcr']).catch((err: Error) => {
+  let result;
+  try {
+    result = await client.get(path, MEDIA_TYPES['plcr']);
+  } catch (err) {
     // Seen for providers with an exit data slice: the resource fails to build, the tables are fine.
-    if (/HTTP 5\d\d/.test(err.message)) {
-      throw new Error(
-        `${err.message}\nbw_read_metadata_tables with object_type "PLCR" (characteristic relationships) ` +
-          `or "PLDS" (data slices) reads the planning properties of ${providerName} from the tables instead.`,
-      );
-    }
-    throw err;
-  });
+    if (format === 'raw' || !/HTTP 5\d\d/.test((err as Error).message)) throw err;
+    return [
+      `The planning properties resource failed on the server (${(err as Error).message.split('\n')[0]}); ` +
+        'read from the metadata tables instead.',
+      '',
+      await readPlanningProperties(client, providerName),
+      '',
+      '── Data Slices ──',
+      ...(await readDataSlices(client, providerName, true)).split('\n').map((l) => (l ? `  ${l}` : l)),
+    ].join('\n');
+  }
   if (format === 'raw') return result.body;
   const status = result.headers['object_status'] ?? result.headers['OBJECT_STATUS'] ?? 'unknown';
 
@@ -846,6 +901,20 @@ export async function bwGetPlanningProperties(
     );
   } else {
     lines.push(`  Save strategy:    (not configured)`);
+  }
+
+  lines.push('', ...formatCharacteristicRelations(info.relations));
+
+  // The data slice resource reports neither the selection nor whether a slice is active, and
+  // fails for an exit slice; the tables carry all of it.
+  lines.push('', '── Data Slices ──');
+  try {
+    lines.push(...(await readDataSlices(client, info.providerName || providerName, true)).split('\n').map((l) => (l ? `  ${l}` : l)));
+  } catch (err) {
+    lines.push(
+      `  Not readable from the metadata tables: ${(err as Error).message.split('\n')[0]}`,
+      '  (needs ADT DataPreview access; bw_read_metadata_tables with object_type "PLDS" is the same read)',
+    );
   }
 
   return lines.join('\n');
@@ -1295,6 +1364,87 @@ function parsePlseXml(xml: string, status: string): PlseInfo {
   return { name, description, planningServiceType, alvl, documentation, status: resolvedStatus, infoArea, package: tlogoPkg, charUsages, rules };
 }
 
+export interface FunctionTypeParameter {
+  name: string;
+  kind: string;
+  description: string;
+  multiple: boolean;
+  infoObject: string;
+  defaultValue: string;
+  variablesAllowed: boolean;
+  children: FunctionTypeParameter[];
+}
+
+export interface FunctionType {
+  name: string;
+  description: string;
+  exitClass: string;
+  referenceData: boolean;
+  emptyRecords: boolean;
+  parameters: FunctionTypeParameter[];
+}
+
+const PARAMETER_KINDS: Record<string, string> = {
+  ElementaryParameter: 'value',
+  SelectionParameter: 'selection',
+  KeyfigureSelectionParameter: 'key figure selection',
+  StructureParameter: 'table',
+};
+
+function typeParameter(attrs: string, body: string, children: FunctionTypeParameter[]): FunctionTypeParameter {
+  const xsiType = attr(attrs, 'xsi:type');
+  const kind = xsiType.slice(xsiType.indexOf(':') + 1);
+  return {
+    name: attr(attrs, 'name'),
+    kind: PARAMETER_KINDS[kind] ?? kind,
+    description: decodeXmlEntities(body.match(/<description\b[^>]*\blabel="([^"]*)"/)?.[1] ?? ''),
+    multiple: attr(attrs, 'multiselection') === 'true',
+    infoObject: attr(attrs, 'infoObject'),
+    defaultValue: decodeXmlEntities(attr(attrs, 'internalDefaultValue')),
+    variablesAllowed: attr(attrs, 'variablesAllowed') === 'true' || attr(attrs, 'varAllowed') === 'true',
+    children,
+  };
+}
+
+/** A planning function type (PLST): the class that runs it and the parameters it takes. */
+export function parseFunctionType(xml: string): FunctionType {
+  const root = xml.match(/<bwPlanningServiceType:planningServiceType\b([^>]*)>/)?.[1] ?? '';
+  const ownDescription = xml.match(/<\/tlogoProperties>\s*<description\b[^>]*\blabel="([^"]*)"/)?.[1] ?? '';
+  const parameters = [...xml.matchAll(/<parameter\b([^>]*)>([\s\S]*?)<\/parameter>/g)].map((p) => {
+    const children = [...p[2].matchAll(/<(elementaryParameter|selectionParameter)\b([^>]*)>([\s\S]*?)<\/\1>/g)].map((c) =>
+      typeParameter(c[2], c[3], []),
+    );
+    return typeParameter(p[1], p[2], children);
+  });
+  return {
+    name: attr(root, 'name'),
+    description: decodeXmlEntities(ownDescription),
+    exitClass: xml.match(/<exitClass\b[^>]*\bname="([^"]*)"/)?.[1] ?? '',
+    referenceData: attr(root, 'refData') === 'true',
+    emptyRecords: attr(root, 'emptyRecords') === 'true',
+    parameters,
+  };
+}
+
+export function formatFunctionType(t: FunctionType): string[] {
+  const lines = [`── Function Type: ${t.name}${t.description ? ` — ${t.description}` : ''} ──`];
+  if (t.exitClass) lines.push(`  Class:            ${t.exitClass}`);
+  lines.push(`  Reference data:   ${t.referenceData ? 'yes' : 'no'}`);
+  lines.push(`  Empty records:    ${t.emptyRecords ? 'processed' : 'not processed'}`);
+  const param = (p: FunctionTypeParameter, pad: string) => {
+    const details = [p.kind + (p.multiple ? ', multiple' : '')];
+    if (p.infoObject) details.push(p.infoObject);
+    if (p.defaultValue) details.push(`default ${p.defaultValue}`);
+    if (p.variablesAllowed) details.push('variables allowed');
+    lines.push(`${pad}${p.name}  [${details.join('; ')}]${p.description ? `  "${p.description}"` : ''}`);
+    for (const c of p.children) param(c, pad + '  ');
+  };
+  lines.push(`  Parameters (${t.parameters.length}):`);
+  if (t.parameters.length === 0) lines.push('    (none)');
+  for (const p of t.parameters) param(p, '    ');
+  return lines;
+}
+
 /**
  * The backend escapes a planning function's documentation twice before writing it into the
  * attribute, so its line breaks arrive as `&amp;amp;#xD;&amp;amp;#xA;`.
@@ -1389,5 +1539,41 @@ export async function bwGetPlanningFunction(
     });
   }
 
+  if (info.planningServiceType) {
+    lines.push('');
+    try {
+      const type = await client.get(`/sap/bw/modeling/plst/${bwSeg(info.planningServiceType)}/a`, MEDIA_TYPES['plst']);
+      lines.push(...formatFunctionType(parseFunctionType(type.body)));
+    } catch (err) {
+      lines.push(`── Function Type: ${info.planningServiceType} ──`, `  Not readable: ${(err as Error).message.split('\n')[0]}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// ── bwGetPlanningFilter ───────────────────────────────────────────────────────
+
+/**
+ * A planning filter is a query document whose main component is the filter itself: its
+ * selections sit on the main component, the variables it uses travel along as subcomponents.
+ */
+export async function bwGetPlanningFilter(
+  client: BwClient,
+  filterName: string,
+  format: 'text' | 'raw' = 'text',
+): Promise<string> {
+  const result = await client.get(`/sap/bw/modeling/filter/${bwSeg(filterName)}/a`, MEDIA_TYPES['filter']);
+  if (format === 'raw') return result.body;
+  const f = parseQueryDocument(result.body, filterName);
+  const lines = [
+    `Planning Filter:   ${f['name']}${f['description'] ? ` — ${f['description']}` : ''}`,
+    `Aggregation Level: ${f['infoProvider'] || '(none)'}`,
+    `InfoArea:          ${f['infoArea'] || '(none)'}`,
+    `Package:           ${f['package'] || '(none)'}`,
+    `Changed:           ${f['changedAt'] || '—'}`,
+  ];
+  renderVariablesAndFilter(f, lines);
+  if (((f['filter'] as unknown[]) ?? []).length === 0) lines.push('', '── Filter ──', '  (no restriction)');
   return lines.join('\n');
 }

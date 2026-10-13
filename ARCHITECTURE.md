@@ -361,7 +361,8 @@ system serves a lower resource version than the fallback.
 | Data Slices | `/sap/bw/modeling/plds/{pldsnm}` | `plds-v1_0_0+xml` |
 | Planning Functions | `/sap/bw/modeling/plse/{plsenm}/a` (read; lock, PUT and unlock on the same path — the PUT saves active) | `plse-v2_0_0+xml` |
 | Planning Sequence | `/sap/bw/modeling/plsq/{plsqnm}` | `plsq-v1_0_0+xml` |
-| Planning Function Type | `/sap/bw/modeling/plst/{plstnm}` | `plst-v1_0_0+xml` |
+| Planning Function Type | `/sap/bw/modeling/plst/{plstnm}/a` (read with the planning function) | `plst-v1_0_0+xml` |
+| Planning Filter | `/sap/bw/modeling/filter/{name}/a` (a query document whose main component is the filter) | `filter-v1_9_0+xml` |
 
 ### Infrastructure Endpoints
 

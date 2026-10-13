@@ -107,6 +107,7 @@ import {
   bwGetPlanningProperties,
   bwGetPlanningSequence,
   bwGetPlanningFunction,
+  bwGetPlanningFilter,
 } from './tools/planning.js';
 import {
   bwUpdatePlanningFunction,
@@ -4735,6 +4736,29 @@ const TOOL_DEFINITIONS = [
       },
     },
     {
+      name: 'bw_get_planning_filter',
+      description:
+        'Read a planning filter — the selection a planning sequence step or an input template works on. ' +
+        'Returns its aggregation level, InfoArea, package, the restriction per characteristic (fixed values, ' +
+        'ranges, exclusions) and the variables it uses with their type, processing and input settings. ' +
+        'A sequence step names its filter (bw_get_planning_sequence).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          filter_name: {
+            type: 'string',
+            description: 'Technical name of the planning filter (e.g. "OBJECT_NAME").',
+          },
+          format: {
+            type: 'string',
+            enum: ['text', 'raw'],
+            description: '"text" (default): readable summary. "raw": the unmodified XML.',
+          },
+        },
+        required: ['filter_name'],
+      },
+    },
+    {
       name: 'bw_get_planning_properties',
       description:
         'Read the Planning Properties (TLOGO PLCR) of a plan-enabled InfoProvider (real-time aDSO or ' +
@@ -6783,6 +6807,10 @@ async function handleToolCall(
 
       case 'bw_get_planning_sequence':
         text = await bwGetPlanningSequence(client, args?.planning_sequence_name as string, (args?.format as 'text' | 'raw') ?? 'text');
+        break;
+
+      case 'bw_get_planning_filter':
+        text = await bwGetPlanningFilter(client, args?.filter_name as string, (args?.format as 'text' | 'raw') ?? 'text');
         break;
 
       case 'bw_get_planning_properties':

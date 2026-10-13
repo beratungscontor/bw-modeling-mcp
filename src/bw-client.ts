@@ -25,6 +25,8 @@ export const MEDIA_TYPES: Record<string, string> = {
   plcr: 'application/vnd.sap.bw.modeling.plcr-v1_0_0+xml',
   plsq: 'application/vnd.sap.bw.modeling.plsq-v1_0_0+xml',
   plse: 'application/vnd.sap.bw.modeling.plse-v2_0_0+xml',
+  plst: 'application/vnd.sap.bw.modeling.plst-v1_0_0+xml',
+  filter: 'application/vnd.sap.bw.modeling.filter-v1_9_0+xml',
   valuehelp: 'application/vnd.sap-bw-modeling.valuehelp2-v1_1_0+xml',
 };
 

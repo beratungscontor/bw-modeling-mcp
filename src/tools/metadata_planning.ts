@@ -57,7 +57,7 @@ const STEP_TYPES: Record<string, string> = {
 };
 
 /** RSPLS_MTYPE — how a characteristic relationship derives its target values. */
-const RELATION_TYPES: Record<string, string> = {
+export const RELATION_TYPES: Record<string, string> = {
   A: 'Attribute',
   E: 'Exit (ABAP class)',
   R: 'Reference data (DataStore object)',
@@ -785,7 +785,8 @@ export async function readPlanningProperties(client: BwClient, providerName: str
 
 // ── Data slices (PLDS) ──────────────────────────────────────────────────────
 
-export async function readDataSlices(client: BwClient, providerName: string): Promise<string> {
+/** `embedded` leaves out the title, for a caller that shows the slices under its own heading. */
+export async function readDataSlices(client: BwClient, providerName: string, embedded = false): Promise<string> {
   const name = sqlLiteral(providerName.trim().toUpperCase());
   const scope = `infoprov = '${name}' AND objvers = 'A'`;
 
@@ -813,6 +814,7 @@ export async function readDataSlices(client: BwClient, providerName: string): Pr
     ]);
 
   if (slices.length === 0) {
+    if (embedded) return '(none defined)';
     const provider = providerName.trim().toUpperCase();
     return header.length > 0
       ? `${provider} is planning-enabled but has no data slice defined (RSPLS_DS_HEAD exists, ` +
@@ -825,10 +827,12 @@ export async function readDataSlices(client: BwClient, providerName: string): Pr
   const vars = await resolveVariables(client, variableUids(ranges, 'LOWINT', 'HIGHINT'));
 
   const out: string[] = [];
-  out.push(`Data Slices: ${providerName.trim().toUpperCase()}`);
-  out.push('Source: metadata tables (read-only — no release publishes a REST resource for data');
-  out.push('        slices, so this is the only route on any platform)');
-  out.push('');
+  if (!embedded) {
+    out.push(`Data Slices: ${providerName.trim().toUpperCase()}`);
+    out.push('Source: metadata tables (read-only — the REST resource of a data slice reports neither');
+    out.push('        its selection nor whether it is active, and fails for an exit slice)');
+    out.push('');
+  }
   out.push('A data slice protects the records it selects: they cannot be changed by manual input');
   out.push('or by a planning function, whatever the lock and authorization situation allows.');
 

@@ -643,35 +643,9 @@ function renderMemberLines(members: unknown[], indent: string, lines: string[]):
   }
 }
 
-function renderQueryText(q: Record<string, unknown>): string {
-  const lines: string[] = [];
+/** The variables and filter sections of a query document, shared by queries and planning filters. */
+export function renderVariablesAndFilter(q: Record<string, unknown>, lines: string[]): void {
   const s = (v: unknown) => (v != null && v !== '' ? String(v) : '—');
-  const bool = (v: unknown) => (v === true || v === 'true') ? 'yes' : 'no';
-
-  lines.push(`Query: ${s(q['name'])} — ${s(q['description'])}`);
-  lines.push(`InfoProvider: ${s(q['infoProvider'])} (${s(q['providerType'])}${q['providerTlogo'] ? `, ${q['providerTlogo']}` : ''})`);
-  lines.push(`InfoArea: ${s(q['infoArea'])}  Package: ${s(q['package'])}`);
-  if (q['compuid']) lines.push(`Component UID: ${q['compuid']}`);
-  lines.push(`Status: ${s(q['status'])}  Changed: ${s(q['changedAt'])}  By: ${s(q['responsible'])}`);
-  if (q['versionNote']) lines.push(`Note: ${q['versionNote']}`);
-
-  const settings = q['settings'] as Record<string, unknown> ?? {};
-  const zs = settings['zeroSuppression'] as Record<string, unknown> ?? {};
-  const rp = settings['resultPosition'] as Record<string, unknown> ?? {};
-  lines.push('');
-  lines.push('── Settings ──');
-  lines.push(`  Zero suppression: rows=${bool(zs['rows'])}  columns=${bool(zs['columns'])}  mode=${s(zs['mode'])}`);
-  lines.push(`  Result position: top=${bool(rp['onTop'])}  left=${bool(rp['onLeft'])}`);
-  lines.push(`  RFC=${bool(settings['rfcEnabled'])}  OData=${bool(settings['odataSupport'])}  EasyQuery=${bool(settings['easyQuery'])}`);
-  lines.push(`  Sign presentation: ${s(settings['signPresentation'])}`);
-  const kd = settings['keyDate'] as Record<string, unknown> | undefined;
-  if (kd) {
-    const kdText = kd['kind'] === 'variable'
-      ? `variable ${s(kd['variable'])}${kd['description'] ? ` (${kd['description']})` : ''}`
-      : kd['kind'] === 'fixed' ? `fixed ${s(kd['date'])}` : 'system date';
-    lines.push(`  Key date: ${kdText}`);
-  }
-
   const variables = q['variables'] as unknown[] ?? [];
   if (variables.length > 0) {
     lines.push('');
@@ -714,6 +688,38 @@ function renderQueryText(q: Record<string, unknown>): string {
       lines.push(`  ${s(f['infoObject'])}: ${parts.length > 0 ? parts.join(', ') : '(no restriction)'}`);
     }
   }
+}
+
+function renderQueryText(q: Record<string, unknown>): string {
+  const lines: string[] = [];
+  const s = (v: unknown) => (v != null && v !== '' ? String(v) : '—');
+  const bool = (v: unknown) => (v === true || v === 'true') ? 'yes' : 'no';
+
+  lines.push(`Query: ${s(q['name'])} — ${s(q['description'])}`);
+  lines.push(`InfoProvider: ${s(q['infoProvider'])} (${s(q['providerType'])}${q['providerTlogo'] ? `, ${q['providerTlogo']}` : ''})`);
+  lines.push(`InfoArea: ${s(q['infoArea'])}  Package: ${s(q['package'])}`);
+  if (q['compuid']) lines.push(`Component UID: ${q['compuid']}`);
+  lines.push(`Status: ${s(q['status'])}  Changed: ${s(q['changedAt'])}  By: ${s(q['responsible'])}`);
+  if (q['versionNote']) lines.push(`Note: ${q['versionNote']}`);
+
+  const settings = q['settings'] as Record<string, unknown> ?? {};
+  const zs = settings['zeroSuppression'] as Record<string, unknown> ?? {};
+  const rp = settings['resultPosition'] as Record<string, unknown> ?? {};
+  lines.push('');
+  lines.push('── Settings ──');
+  lines.push(`  Zero suppression: rows=${bool(zs['rows'])}  columns=${bool(zs['columns'])}  mode=${s(zs['mode'])}`);
+  lines.push(`  Result position: top=${bool(rp['onTop'])}  left=${bool(rp['onLeft'])}`);
+  lines.push(`  RFC=${bool(settings['rfcEnabled'])}  OData=${bool(settings['odataSupport'])}  EasyQuery=${bool(settings['easyQuery'])}`);
+  lines.push(`  Sign presentation: ${s(settings['signPresentation'])}`);
+  const kd = settings['keyDate'] as Record<string, unknown> | undefined;
+  if (kd) {
+    const kdText = kd['kind'] === 'variable'
+      ? `variable ${s(kd['variable'])}${kd['description'] ? ` (${kd['description']})` : ''}`
+      : kd['kind'] === 'fixed' ? `fixed ${s(kd['date'])}` : 'system date';
+    lines.push(`  Key date: ${kdText}`);
+  }
+
+  renderVariablesAndFilter(q, lines);
 
   const rows = q['rows'] as unknown[] ?? [];
   const columns = q['columns'] as unknown[] ?? [];
@@ -919,8 +925,9 @@ export function parseQueryDocument(
   }
 
   // Step 5: Parse filter
+  // A planning filter is a document of its own; its selections sit on the main component.
   const filterSection = mainComp['Qry:filter'] as Record<string, unknown> | undefined;
-  const selections = ensureArray(filterSection?.['Qry:selections']) as Record<string, unknown>[];
+  const selections = ensureArray(filterSection ? filterSection['Qry:selections'] : mainComp['Qry:selections']) as Record<string, unknown>[];
   const filter: Record<string, unknown>[] = [];
   for (const sel of selections) {
     const usageType = (sel['@_usageType'] as string) ?? '';

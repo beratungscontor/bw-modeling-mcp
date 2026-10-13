@@ -274,6 +274,7 @@ const COLLECTION_NEEDS: Record<string, string[]> = {
   bw_create_planning_function: ['plse'],
   bw_get_planning_properties: ['plcr'],
   bw_get_planning_sequence: ['plsq'],
+  bw_get_planning_filter: ['filter'],
 
   // Query *data*. Classic publishes the `query` collection — query definitions read fine —
   // but not `reporting`, and its `comp/reporting` handler answers every call with "Reporting
