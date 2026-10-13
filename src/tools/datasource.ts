@@ -862,7 +862,9 @@ export async function bwPreviewDatasource(
   const contentMatch = previewBody.match(/<simpleParams\b[^>]*\bcontent="([^"]*)"/);
   const content = contentMatch?.[1] ?? '';
   const decoded = Buffer.from(content, 'base64').toString('utf-8');
-  const parsed = JSON.parse(decoded) as { T_DATA_0001?: string[][] };
+  // An empty content is the system saying "nothing to show" — a file DataSource whose file is
+  // not on the application server answers like this — not a malformed answer.
+  const parsed = (decoded.trim() ? JSON.parse(decoded) : {}) as { T_DATA_0001?: string[][] };
   const rows: string[][] = parsed['T_DATA_0001'] ?? [];
 
   const summaryHeader = [

@@ -634,16 +634,27 @@ export class BwClient {
   async get(path: string, accept: string): Promise<GetResult> {
     await this.ensureCsrf();
     const resolvedAccept = `application/xml, ${expandAccept(accept)}`;
-    const response = await this.http.get(path, {
-      headers: {
-        Accept: resolvedAccept,
-        'bwmt-level': '50',
-        'X-CSRF-Token': this.csrfToken!,
-        ...this.cookieHeaders(),
-      },
-      responseType: 'text',
-      transformResponse: [(data) => data],
-    });
+    const send = () =>
+      this.http.get(path, {
+        headers: {
+          Accept: resolvedAccept,
+          'bwmt-level': '50',
+          'X-CSRF-Token': this.csrfToken!,
+          ...this.cookieHeaders(),
+        },
+        responseType: 'text',
+        transformResponse: [(data) => data],
+      });
+    // A read has no side effects, so a socket the server already closed is retried once,
+    // as for the token fetch. Readers that walk a tree issue dozens of GETs in a row, and
+    // one dead keep-alive connection otherwise fails the whole walk.
+    let response;
+    try {
+      response = await send();
+    } catch (err) {
+      if (!BwClient.isTransportError(err)) throw err;
+      response = await send();
+    }
     this.updateCookies(response);
     if (response.status >= 400) {
       if (response.status === 500) this.discardSessionContext();
