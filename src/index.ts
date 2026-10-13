@@ -4297,8 +4297,9 @@ const TOOL_DEFINITIONS = [
       name: 'bw_query_statistics',
       description:
         'Read the BW query statistics (RSDDSTAT) of any frontend, as RSRT statistics and ST03 show them, without SAP GUI. ' +
-        'With query_name or provider: every execution in a time window (default the last 24 hours) with count, ' +
-        'min / median / p90 / max runtime and the users, plus the breakdown of the slowest ones. With step_uid: one ' +
+        'With query_name or provider: the executions in a time window (default the last 24 hours) — count, the last ' +
+        'execution and its user, executions per user, min / median / p90 / max runtime (over the latest 5,000 when ' +
+        'there are more), plus the breakdown of the slowest ones. With step_uid: one ' +
         'navigation step in full — BW runtime by layer, top events, records read and transferred, the effective ' +
         '"Operations in SAP HANA" setting and the data manager time per provider. Statistics must be switched on for ' +
         'the object (transaction RSDDSTAT). To measure one call of this server, use bw_query_data with_statistics instead.',

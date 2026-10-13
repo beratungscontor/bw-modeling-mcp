@@ -28,6 +28,12 @@ export function statObjectName(compId: string, isProvider: boolean): string {
   return (isProvider ? `$${compId}` : compId).toUpperCase();
 }
 
+/** Other front ends record a direct provider call under "$!1" plus the provider. */
+export function statObjectNames(compId: string, isProvider: boolean): string[] {
+  const name = compId.toUpperCase();
+  return isProvider ? [`$${name}`, `$!1${name}`] : [name];
+}
+
 function checked(sql: string): string {
   if (sql.length > MAX_STATEMENT) {
     throw new Error(`The statistics statement is ${sql.length} characters long; DataPreview reads at most ${MAX_STATEMENT}.`);
@@ -35,12 +41,27 @@ function checked(sql: string): string {
   return sql;
 }
 
-export function stepsStatement(objName: string, from: Date, to: Date): string {
-  return checked(
-    `SELECT i~stepuid, i~uname, i~starttime, i~runtime FROM rsddstatinfo AS i JOIN rsddstatheader AS h ` +
-      `ON h~stepuid = i~stepuid WHERE h~objname = '${sqlLiteral(objName)}' ` +
-      `AND i~starttime BETWEEN ${statStamp(from)} AND ${statStamp(to)}`
+// A step carries one header row per handle (MDX and OLAP, for instance), so the steps of an
+// object are selected through a subquery rather than a join: every step comes back once.
+function inWindow(objName: string, from: Date, to: Date): string {
+  return (
+    `FROM rsddstatinfo WHERE stepuid IN ( SELECT stepuid FROM rsddstatheader WHERE objname = '${sqlLiteral(objName)}' ) ` +
+    `AND starttime BETWEEN ${statStamp(from)} AND ${statStamp(to)}`
   );
+}
+
+export type StepOrder = 'latest' | 'slowest';
+
+export function stepsStatement(objName: string, from: Date, to: Date, order: StepOrder = 'latest'): string {
+  return checked(
+    `SELECT stepuid, uname, starttime, runtime ${inWindow(objName, from, to)} ` +
+      `ORDER BY ${order === 'latest' ? 'starttime' : 'runtime'} DESCENDING`
+  );
+}
+
+/** Executions per user; their sum is the number of executions in the window. */
+export function usersStatement(objName: string, from: Date, to: Date): string {
+  return checked(`SELECT uname, COUNT(*) AS n ${inWindow(objName, from, to)} GROUP BY uname`);
 }
 
 /** Classic releases have no EVPROP column, and with it no record of the HANA execution mode. */
@@ -78,10 +99,28 @@ function toStep(r: Row): Step {
   return { stepUid: r.STEPUID, user: r.UNAME, start: r.STARTTIME, runtime: Number(r.RUNTIME) || 0 };
 }
 
-export async function stepsInWindow(client: BwClient, objName: string, from: Date, to: Date): Promise<Step[]> {
-  const rows = await queryTable(client, stepsStatement(objName, from, to), 5000);
-  const seen = new Set<string>();
-  return rows.map(toStep).filter((s) => !seen.has(s.stepUid) && seen.add(s.stepUid));
+/** How many of the latest executions are read for the runtime percentiles. */
+export const MAX_STEPS = 5000;
+
+export async function stepsInWindow(
+  client: BwClient,
+  objName: string,
+  from: Date,
+  to: Date,
+  order: StepOrder = 'latest',
+  maxRows = MAX_STEPS,
+): Promise<Step[]> {
+  return (await queryTable(client, stepsStatement(objName, from, to, order), maxRows)).map(toStep);
+}
+
+export interface UserCount {
+  user: string;
+  executions: number;
+}
+
+export async function usersInWindow(client: BwClient, objName: string, from: Date, to: Date): Promise<UserCount[]> {
+  const rows = await queryTable(client, usersStatement(objName, from, to), MAX_STEPS);
+  return rows.map((r) => ({ user: r.UNAME, executions: Number(r.N) || 0 }));
 }
 
 // ── Event breakdown ──────────────────────────────────────────────────────────
@@ -91,22 +130,36 @@ const LAYERS = [
   'OLAP cache',
   'Authorizations',
   'Data manager / database',
+  'Input help',
+  'Planning',
   'Transfer to front end',
   'BICS provider',
+  'MDX / OLAP BAPI',
+  'Remote function calls',
+  'Front end / application',
   'Not assigned',
 ] as const;
 type Layer = (typeof LAYERS)[number];
 
-/** Events that carry a count in EVCOUNT rather than a time. */
-const COUNT_EVENTS = new Set([9010, 9011, 2525]);
+/** Events that carry a count, a size or a gross runtime in EVCOUNT rather than a time. */
+const COUNT_EVENTS = new Set([
+  2525, 2530, 9010, 9011, 12502, 12503, 12504, 12505, 15010, 15011, 15012, 15103, 15104,
+  50009, 50011, 50012, 50013, 50014, 50015, 50016, 50017, 50018, 50019, 50080, 50081, 50090, 50091,
+]);
 
 export function layerOf(eventId: number): Layer {
-  if (eventId === 0) return 'Not assigned';
+  // 1 is the user's wait time, outside the BW runtime like the non-assigned time.
+  if (eventId === 0 || eventId === 1 || eventId === 1000) return 'Not assigned';
   if (eventId >= 2500 && eventId < 2600) return 'OLAP cache';
   if (eventId >= 4000 && eventId < 5000) return 'Authorizations';
+  if (eventId >= 6000 && eventId < 6100) return 'Input help';
   if (eventId >= 9000 && eventId < 10000) return 'Data manager / database';
   if (eventId === 3200) return 'Transfer to front end';
+  if (eventId === 10000) return 'Remote function calls';
   if (eventId >= 13000 && eventId < 14000) return 'BICS provider';
+  if ((eventId >= 12500 && eventId < 13000) || (eventId >= 14000 && eventId < 30000)) return 'Front end / application';
+  if (eventId >= 40000 && eventId < 41000) return 'MDX / OLAP BAPI';
+  if (eventId >= 50000 && eventId < 52000) return 'Planning';
   return 'OLAP processor';
 }
 
@@ -245,13 +298,22 @@ function percentile(sorted: number[], p: number): number {
   return sorted[idx];
 }
 
-export function summarize(steps: Step[]): string[] {
-  const times = steps.map((s) => s.runtime).sort((a, b) => a - b);
-  const users = [...new Set(steps.map((s) => s.user))].sort();
+/**
+ * `latest` are the most recent executions, newest first, at most MAX_STEPS of them; `users`
+ * counts every execution in the window, so the total stays right when `latest` is cut short.
+ */
+export function summarize(latest: Step[], users: UserCount[]): string[] {
+  const total = Math.max(users.reduce((s, u) => s + u.executions, 0), latest.length);
+  const times = latest.map((s) => s.runtime).sort((a, b) => a - b);
+  const over = latest.length < total ? ` over the latest ${fmtN(latest.length)} of ${fmtN(total)}` : '';
+  const byUser = [...users].sort((a, b) => b.executions - a.executions || a.user.localeCompare(b.user));
   return [
-    `  Executions: ${steps.length}`,
-    `  Runtime: min ${fmtS(times[0])}, median ${fmtS(percentile(times, 50))}, p90 ${fmtS(percentile(times, 90))}, max ${fmtS(times[times.length - 1])}`,
-    `  Users: ${users.join(', ')}`,
+    `  Executions: ${fmtN(total)}`,
+    `  Last: ${stampToIso(latest[0].start)} by ${latest[0].user}`,
+    `  Runtime${over}: min ${fmtS(times[0])}, median ${fmtS(percentile(times, 50))}, ` +
+      `p90 ${fmtS(percentile(times, 90))}, max ${fmtS(times[times.length - 1])}`,
+    `  Users: ${byUser.slice(0, 20).map((u) => `${u.user} (${fmtN(u.executions)})`).join(', ')}` +
+      (byUser.length > 20 ? `, and ${byUser.length - 20} more` : ''),
   ];
 }
 
@@ -280,27 +342,32 @@ export async function bwQueryStatistics(client: BwClient, args: QueryStatisticsA
     return ['BW statistics, one step:', ...formatStep(detail, modes)].join('\n');
   }
   if (!!args.query_name === !!args.provider) throw new Error('Pass exactly one of query_name, provider or step_uid.');
-  const objName = statObjectName((args.query_name ?? args.provider)!, !!args.provider);
+  const objNames = statObjectNames((args.query_name ?? args.provider)!, !!args.provider);
   const to = args.to ? parseTime(args.to, 'to') : new Date();
   const from = args.from ? parseTime(args.from, 'from') : new Date(to.getTime() - (args.hours ?? 24) * 3600_000);
   if (from >= to) throw new Error('from must lie before to.');
+  const window = `${stampToIso(statStamp(from))} to ${stampToIso(statStamp(to))}`;
+  const slowestN = Math.max(0, Math.min(args.slowest ?? 3, 10));
 
-  const steps = await stepsInWindow(client, objName, from, to);
-  const lines = [`BW statistics for ${objName}, ${stampToIso(statStamp(from))} to ${stampToIso(statStamp(to))}:`];
-  if (steps.length === 0) {
-    lines.push(
-      '  No executions recorded. Either it did not run in this window, or statistics are switched off ' +
-        'for it (transaction RSDDSTAT); a direct provider call is recorded under "$" plus the provider name.'
-    );
-    return lines.join('\n');
+  const sections: string[] = [];
+  for (const objName of objNames) {
+    const users = await usersInWindow(client, objName, from, to);
+    if (users.length === 0) continue;
+    const latest = await stepsInWindow(client, objName, from, to);
+    const lines = [`BW statistics for ${objName}, ${window}:`, ...summarize(latest, users)];
+    const slowest = slowestN > 0 ? await stepsInWindow(client, objName, from, to, 'slowest', slowestN) : [];
+    if (slowest.length > 0) {
+      lines.push('', `Slowest ${slowest.length}:`);
+      for (const s of slowest) lines.push(...formatStep(await readStep(client, s.stepUid, s), modes), '');
+    }
+    sections.push(lines.join('\n').trimEnd());
   }
-  lines.push(...summarize(steps));
-  const slowest = [...steps].sort((a, b) => b.runtime - a.runtime).slice(0, Math.max(0, Math.min(args.slowest ?? 3, 10)));
-  if (slowest.length > 0) {
-    lines.push('', `Slowest ${slowest.length}:`);
-    for (const s of slowest) lines.push(...formatStep(await readStep(client, s.stepUid, s), modes), '');
-  }
-  return lines.join('\n').trimEnd();
+  if (sections.length > 0) return sections.join('\n\n');
+  return [
+    `BW statistics for ${objNames.join(' / ')}, ${window}:`,
+    '  No executions recorded. Either it did not run in this window, or statistics are switched off ' +
+      'for it (transaction RSDDSTAT).',
+  ].join('\n');
 }
 
 // ── bw_query_data with_statistics ────────────────────────────────────────────
