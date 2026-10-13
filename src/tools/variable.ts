@@ -14,6 +14,12 @@ export type FormulaDimension = (typeof FORMULA_DIMENSIONS)[number];
 /** Pseudo InfoObject every formula variable is defined on. */
 export const FORMULA_IOBJ = '1FORMULA';
 
+/** Pseudo InfoObject of a text variable that is not replaced from a characteristic. */
+export const TEXT_IOBJ = '1TEXT';
+
+export const TEXT_REPLACEMENT_TYPES = ['Key', 'ExternalCharacteristic', 'Name'] as const;
+export const TEXT_REPLACEMENT_INTERVALS = ['FromValue', 'ToValue', 'Difference'] as const;
+
 export interface CreateVariableArgs {
   variable_name: string;
   iobj_name?: string;
@@ -23,7 +29,7 @@ export interface CreateVariableArgs {
   reusable?: boolean;
   represents?: 'Interval' | 'SingleValue' | 'SeveralSingleValues' | 'SelectionOption';
   processing_type?: 'UserEntry' | 'CustomerExit' | 'Authorization' | 'ReplacementPath';
-  variable_type?: 'CharacteristicValue' | 'Hierarchy' | 'HierarchyNodes' | 'Formula';
+  variable_type?: 'CharacteristicValue' | 'Hierarchy' | 'HierarchyNodes' | 'Formula' | 'Text';
   input_type?: 'Optional' | 'MandatoryWithInitial' | 'MandatoryWithoutInitial';
   /** Formula variables only: what the value stands for. */
   dimension?: FormulaDimension;
@@ -33,6 +39,16 @@ export interface CreateVariableArgs {
   currency?: string;
   /** Formula variables of dimension Quantity or Price: the unit of measure. */
   unit?: string;
+  /** Text variables by replacement path: what of the characteristic value the text shows. */
+  replacement_type?: (typeof TEXT_REPLACEMENT_TYPES)[number];
+  /** Text variables by replacement path: which bound of the value is shown. */
+  replacement_interval?: (typeof TEXT_REPLACEMENT_INTERVALS)[number];
+  /** Text variables by replacement path: first character shown, counted from 0. */
+  offset_start?: number;
+  /** Text variables by replacement path: number of characters shown; 0 shows the rest. */
+  offset_length?: number;
+  /** Text variables by replacement path: a characteristic variable on the same characteristic to read the value from. */
+  replacement_variable?: string;
   master_language?: string;
   package?: string;
   transport?: string;
@@ -177,13 +193,100 @@ export function checkUnitCurrency(dimension: string, currency?: string, unit?: s
   }
 }
 
+const FORMULA_FIELDS = ['dimension', 'default_value', 'currency', 'unit'] as const;
+const TEXT_FIELDS = ['replacement_type', 'replacement_interval', 'offset_start', 'offset_length', 'replacement_variable'] as const;
+
+function refuseFields(args: CreateVariableArgs, fields: readonly (keyof CreateVariableArgs)[], owner: string): void {
+  for (const field of fields) {
+    if (args[field] !== undefined) throw new Error(`${field} applies to ${owner}.`);
+  }
+}
+
 function validateCharacteristicArgs(args: CreateVariableArgs): void {
   if (!args.iobj_name) throw new Error('iobj_name is required for a characteristic variable.');
-  for (const field of ['dimension', 'default_value', 'currency', 'unit'] as const) {
-    if (args[field] !== undefined) {
-      throw new Error(`${field} applies to formula variables only (variable_type "Formula").`);
-    }
+  refuseFields(args, FORMULA_FIELDS, 'formula variables only (variable_type "Formula")');
+  refuseFields(args, TEXT_FIELDS, 'text variables only (variable_type "Text")');
+}
+
+/** The processing type of a text variable: by replacement path when it names a characteristic. */
+export function textProcType(args: CreateVariableArgs): string {
+  return args.processing_type ?? (args.iobj_name ? 'ReplacementPath' : 'UserEntry');
+}
+
+export function validateTextArgs(args: CreateVariableArgs): void {
+  refuseFields(args, FORMULA_FIELDS, 'formula variables only (variable_type "Formula")');
+  const procType = textProcType(args);
+  if (procType !== 'ReplacementPath' && procType !== 'CustomerExit' && procType !== 'UserEntry') {
+    throw new Error(`A text variable is filled by "ReplacementPath", "CustomerExit" or "UserEntry", not "${procType}".`);
   }
+  if (args.represents && args.represents !== 'SingleValue') {
+    throw new Error('A text variable always represents a single value.');
+  }
+  if (procType === 'ReplacementPath') {
+    if (!args.iobj_name) throw new Error('A text variable by replacement path needs iobj_name: the characteristic whose value it shows.');
+    // Saved as consistent, but the query generator then refuses every query using it.
+    if (args.ready_for_input) throw new Error('A text variable by replacement path cannot be ready for input.');
+    if (args.replacement_type && !(TEXT_REPLACEMENT_TYPES as readonly string[]).includes(args.replacement_type)) {
+      throw new Error(`replacement_type must be one of ${TEXT_REPLACEMENT_TYPES.join(', ')}.`);
+    }
+    if (args.replacement_interval && !(TEXT_REPLACEMENT_INTERVALS as readonly string[]).includes(args.replacement_interval)) {
+      throw new Error(`replacement_interval must be one of ${TEXT_REPLACEMENT_INTERVALS.join(', ')}.`);
+    }
+    for (const field of ['offset_start', 'offset_length'] as const) {
+      const v = args[field];
+      if (v !== undefined && (!Number.isInteger(v) || v < 0 || v > 9999)) throw new Error(`${field} must be a whole number from 0 to 9999.`);
+    }
+  } else {
+    if (args.iobj_name && args.iobj_name.toUpperCase() !== TEXT_IOBJ) {
+      throw new Error(`A text variable filled by ${procType} is not defined on a characteristic: leave iobj_name out.`);
+    }
+    refuseFields(args, TEXT_FIELDS, 'text variables by replacement path only');
+  }
+}
+
+export interface SourceVariable {
+  id: string;
+  name: string;
+  description: string;
+}
+
+/**
+ * The replacement path of a text variable, as the backend stores it (RSZGLOBV FLAGR, FLAGLH,
+ * FOFFSET, FLENGTH). A source variable goes on the same element as its id, name and
+ * description (REFERENCE_UID), as the modeling tools write it.
+ */
+export function textReplacementPathXml(args: CreateVariableArgs, source?: SourceVariable): string {
+  const pad = (n?: number) => String(n ?? 0).padStart(4, '0');
+  const from = source
+    ? ` id="${escapeXml(source.id)}" name="${escapeXml(source.name)}" description="${escapeXml(source.description)}"`
+    : '';
+  return `<Qry:replacementPath type="${args.replacement_type ?? 'Key'}" asBoolean="false"` +
+    ` offsetStart="${pad(args.offset_start)}" offsetLength="${pad(args.offset_length)}"` +
+    ` calculateBeforeNonCum="false" interval="${args.replacement_interval ?? 'FromValue'}"${from}/>`;
+}
+
+/** The characteristic variable a text variable reads its value from; it must sit on the same characteristic. */
+async function resolveSourceVariable(client: BwClient, name: string, iobjName: string): Promise<SourceVariable> {
+  const nameUpper = name.toUpperCase();
+  const exist = await client.rawGet(
+    `/sap/bw/modeling/queryint?action=compexist&compid=${name.toLowerCase()}&type=VAR`,
+    { 'bwmt-level': '50' }
+  );
+  if (header(exist.headers, 'compexist') !== 'true') throw new Error(`Variable '${nameUpper}' does not exist.`);
+  const { body } = await client.get(`/sap/bw/modeling/variable/${bwSeg(name.toLowerCase())}/a`, variableAccept());
+  const open = body.match(/<Qry:mainComponent\b[^>]*>/)?.[0] ?? '';
+  const id = open.match(/\bid="([^"]+)"/)?.[1] ?? header(exist.headers, 'elemuid');
+  const iobj = open.match(/\binfoObject="([^"]+)"/)?.[1] ?? '';
+  const type = body.match(/<Qry:type>([^<]*)<\/Qry:type>\s*<Qry:procType>/)?.[1] ?? '';
+  if (!id) throw new Error(`Variable '${nameUpper}' has no id.`);
+  if (type && type !== 'CharacteristicValue') {
+    throw new Error(`Variable '${nameUpper}' is a ${type} variable; a text variable reads its value from a characteristic value variable.`);
+  }
+  if (iobj.toUpperCase() !== iobjName) {
+    throw new Error(`Variable '${nameUpper}' is on ${iobj || 'no characteristic'}, not on ${iobjName}.`);
+  }
+  const description = body.match(/<Qry:description\b[^>]*\bvalue="([^"]*)"/)?.[1] ?? '';
+  return { id, name: nameUpper, description: description.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&') };
 }
 
 function validateFormulaArgs(args: CreateVariableArgs): void {
@@ -248,9 +351,14 @@ function validateFormulaArgs(args: CreateVariableArgs): void {
  * in defaultValues (RSZRANGE, I EQ value) — not defaultSelection, where a value is dropped —
  * and is parsed in the logon user's decimal notation (see userDecimalSeparator).
  *
- * Deliberately not exposed: SAPExit (SAP-delivered, not something to create); the
- * Text variable type (it does not sit on a characteristic); and every
- * replacement-path variant except CurrentMember. QueryResult and HierarchyAttribute
+ * A text variable (type Text, VARTYP 3) is a single value of up to 60 characters. By
+ * replacement path it sits on the characteristic whose value it shows and is never ready for
+ * input, and it can read the value from a characteristic variable on that characteristic instead
+ * of from the characteristic itself; filled by a customer exit or user entry it sits on the
+ * pseudo InfoObject 1TEXT with a Constant / 5 default hint, as on a formula variable.
+ *
+ * Deliberately not exposed: SAPExit (SAP-delivered, not something to create); and every
+ * replacement-path variant of a characteristic variable except CurrentMember. QueryResult and HierarchyAttribute
  * need the internal UID of the donor query plus its InfoProvider, Key and Attribute
  * belong to text and formula variables. Always verify a new combination by reading
  * the object back before exposing it here.
@@ -263,30 +371,41 @@ export async function bwCreateVariable(
   const nameLower = args.variable_name.toLowerCase();
   const variableType = args.variable_type ?? 'CharacteristicValue';
   const isFormula = variableType === 'Formula';
+  const isText = variableType === 'Text';
   if (isFormula) validateFormulaArgs(args);
+  else if (isText) validateTextArgs(args);
   else validateCharacteristicArgs(args);
-  const iobjName = isFormula ? FORMULA_IOBJ : args.iobj_name!.toUpperCase();
+  const procType = isText ? textProcType(args) : args.processing_type ?? 'UserEntry';
+  const iobjName = isFormula
+    ? FORMULA_IOBJ
+    : isText && procType !== 'ReplacementPath'
+      ? TEXT_IOBJ
+      : args.iobj_name!.toUpperCase();
   const pkg = args.package ?? args.development_class ?? '$TMP';
   const transport = args.transport?.toUpperCase();
-  const readyForInput = args.ready_for_input ?? true;
+  const readyForInput = args.ready_for_input ?? (isText ? procType === 'UserEntry' : true);
   const reusable = args.reusable ?? true;
-  const represents = isFormula ? 'SingleValue' : args.represents ?? 'Interval';
-  const procType = args.processing_type ?? 'UserEntry';
+  const represents = isFormula || isText ? 'SingleValue' : args.represents ?? 'Interval';
   const inputType = args.input_type ?? 'Optional';
   const dimension = isFormula ? args.dimension ?? 'Number' : 'Blank';
   // Formula variables carry the hint Eclipse writes (Constant / 5) and attribute 1ATTRKEY; with
   // the characteristic-style hint value 1FORMULA the variable saves as consistent, but every
   // query computing with it fails with "DEFAULTHINT: value 1FORMULA not supported".
-  const hintType = isFormula ? 'Constant' : 'InfoObject';
-  const hintValue = isFormula ? '5' : iobjName;
+  const constantHint = isFormula || (isText && procType !== 'ReplacementPath');
+  const hintType = constantHint ? 'Constant' : 'InfoObject';
+  const hintValue = constantHint ? '5' : iobjName;
   const attributeAttr = isFormula ? ' attribute="1ATTRKEY"' : '';
   const defaultLiteral =
     isFormula && args.default_value !== undefined
       ? await formulaDefaultLiteral(client, args.default_value)
       : undefined;
   // Only the current-member variant is supported; it needs no donor object.
+  const sourceVariable =
+    isText && args.replacement_variable ? await resolveSourceVariable(client, args.replacement_variable, iobjName) : undefined;
   const replacementPathXml =
-    procType === 'ReplacementPath'
+    isText && procType === 'ReplacementPath'
+      ? textReplacementPathXml(args, sourceVariable)
+      : procType === 'ReplacementPath'
       ? '<Qry:replacementPath type="CurrentMember" asBoolean="false" offsetStart="0000"' +
         ' offsetLength="0000" calculateBeforeNonCum="false"/>'
       : '';
@@ -360,7 +479,7 @@ export async function bwCreateVariable(
     const variableBody = `<?xml version="1.0" encoding="UTF-8"?>
 <Qry:queryResource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:Qry="http://www.sap.com/bw/Query.ecore" xmlns:adtcore="http://www.sap.com/adt/core">
   <Qry:schemaVersion>1.0</Qry:schemaVersion>
-  <Qry:mainComponent xsi:type="Qry:Variable" id="${elemUid}" componentVersion="100" reusable="${reusable}" technicalName="${nameUpper}"${attributeAttr} dimIndicator="${dimension}" infoObject="${iobjName}" readyForInput="${readyForInput}">
+  <Qry:mainComponent xsi:type="Qry:Variable" id="${elemUid}" componentVersion="100" reusable="${reusable}" technicalName="${nameUpper}"${attributeAttr}${isText ? ' inputLength="0060"' : ` dimIndicator="${dimension}"`} infoObject="${iobjName}" readyForInput="${readyForInput}">
     <Qry:description default="false" value="${descEsc}"/>
     <Qry:defaultHint>
       <Qry:type>${hintType}</Qry:type>
@@ -424,6 +543,15 @@ export async function bwCreateVariable(
       ...(defaultLiteral !== undefined ? { default_value: args.default_value } : {}),
       ...(isFormula && args.currency ? { currency: args.currency.toUpperCase() } : {}),
       ...(isFormula && args.unit ? { unit: args.unit.toUpperCase() } : {}),
+      ...(isText && procType === 'ReplacementPath'
+        ? {
+            replacement_type: args.replacement_type ?? 'Key',
+            replacement_interval: args.replacement_interval ?? 'FromValue',
+            offset_start: args.offset_start ?? 0,
+            offset_length: args.offset_length ?? 0,
+            ...(sourceVariable ? { replacement_variable: sourceVariable.name } : {}),
+          }
+        : {}),
       represents,
       input_type: inputType,
       ready_for_input: readyForInput,

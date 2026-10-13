@@ -2232,7 +2232,12 @@ const TOOL_DEFINITIONS = [
         'A formula variable (variable_type "Formula") stands for a number and is used as a formula ' +
         'operand in bw_update_query_key_figures, bw_create_ckf and bw_update_ckf: no iobj_name, ' +
         'filled by UserEntry or CustomerExit, with a dimension, an optional default value, and a ' +
-        'unit (Quantity), a currency (Amount) or either (Price). Text variables are not supported. ' +
+        'unit (Quantity), a currency (Amount) or either (Price). A text variable (variable_type "Text") ' +
+        'is written as &NAME& into a query or member description and replaced at runtime: by ' +
+        'replacement path (the default with iobj_name) it shows the key, the external key or the ' +
+        'text of that characteristic\'s value and is never ready for input; filled by CustomerExit or ' +
+        'UserEntry it takes no iobj_name. The query tools bind a text variable named in a description ' +
+        'when they save the query. ' +
         'To keep a variable out of the user\'s variable screen, set ready_for_input false.',
       inputSchema: {
         type: 'object',
@@ -2243,7 +2248,7 @@ const TOOL_DEFINITIONS = [
           },
           iobj_name: {
             type: 'string',
-            description: 'Technical name of the InfoObject (characteristic) this variable is based on (e.g. "CHARACTERISTIC"). Must exist in the system. Required for a characteristic variable; leave it out for a formula variable.',
+            description: 'Technical name of the InfoObject (characteristic) this variable is based on (e.g. "CHARACTERISTIC"). Must exist in the system. Required for a characteristic variable and for a text variable by replacement path (the characteristic whose value it shows); leave it out for a formula variable and for a text variable filled by CustomerExit or UserEntry.',
           },
           description: {
             type: 'string',
@@ -2255,7 +2260,7 @@ const TOOL_DEFINITIONS = [
           },
           ready_for_input: {
             type: 'boolean',
-            description: 'Whether the variable is shown on the variable screen for user input. Defaults to true. Set false for a variable that only the customer exit fills.',
+            description: 'Whether the variable is shown on the variable screen for user input. Defaults to true, for a text variable only with UserEntry. Set false for a variable that only the customer exit fills. A text variable by replacement path cannot be ready for input.',
           },
           reusable: {
             type: 'boolean',
@@ -2273,8 +2278,30 @@ const TOOL_DEFINITIONS = [
           },
           variable_type: {
             type: 'string',
-            enum: ['CharacteristicValue', 'Hierarchy', 'HierarchyNodes', 'Formula'],
-            description: 'What the variable stands for: a characteristic value (default), a whole hierarchy, hierarchy nodes, or a number (Formula). Hierarchy variables still reference a characteristic via iobj_name; a formula variable references none and always represents a single value.',
+            enum: ['CharacteristicValue', 'Hierarchy', 'HierarchyNodes', 'Formula', 'Text'],
+            description: 'What the variable stands for: a characteristic value (default), a whole hierarchy, hierarchy nodes, a number (Formula) or a text (Text). Hierarchy variables still reference a characteristic via iobj_name; formula and text variables always represent a single value.',
+          },
+          replacement_type: {
+            type: 'string',
+            enum: ['Key', 'ExternalCharacteristic', 'Name'],
+            description: 'Text variables by replacement path only: what the text shows of the characteristic value — the key (default), the external key, or its text (Name).',
+          },
+          replacement_interval: {
+            type: 'string',
+            enum: ['FromValue', 'ToValue', 'Difference'],
+            description: 'Text variables by replacement path only: for a range, the lower bound (default), the upper bound, or the difference.',
+          },
+          offset_start: {
+            type: 'number',
+            description: 'Text variables by replacement path only: first character of the value shown, counted from 0 (default 0).',
+          },
+          offset_length: {
+            type: 'number',
+            description: 'Text variables by replacement path only: number of characters shown; 0 (default) shows the rest.',
+          },
+          replacement_variable: {
+            type: 'string',
+            description: 'Text variables by replacement path only: a characteristic value variable on the same characteristic (iobj_name) to read the value from, instead of the characteristic itself (e.g. "VAR_NAME").',
           },
           dimension: {
             type: 'string',
@@ -6215,7 +6242,12 @@ async function handleToolCall(
           reusable: args?.reusable as boolean | undefined,
           represents: args?.represents as 'Interval' | 'SingleValue' | 'SeveralSingleValues' | 'SelectionOption' | undefined,
           processing_type: args?.processing_type as 'UserEntry' | 'CustomerExit' | 'Authorization' | 'ReplacementPath' | undefined,
-          variable_type: args?.variable_type as 'CharacteristicValue' | 'Hierarchy' | 'HierarchyNodes' | 'Formula' | undefined,
+          variable_type: args?.variable_type as 'CharacteristicValue' | 'Hierarchy' | 'HierarchyNodes' | 'Formula' | 'Text' | undefined,
+          replacement_type: args?.replacement_type as 'Key' | 'ExternalCharacteristic' | 'Name' | undefined,
+          replacement_interval: args?.replacement_interval as 'FromValue' | 'ToValue' | 'Difference' | undefined,
+          offset_start: args?.offset_start as number | undefined,
+          offset_length: args?.offset_length as number | undefined,
+          replacement_variable: args?.replacement_variable as string | undefined,
           dimension: args?.dimension as FormulaDimension | undefined,
           default_value: args?.default_value as number | undefined,
           unit: args?.unit as string | undefined,

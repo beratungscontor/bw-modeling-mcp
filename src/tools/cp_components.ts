@@ -590,6 +590,14 @@ export async function bwGetVariable(
       ready_for_input: mainComp['@_readyForInput'] === 'true' || mainComp['@_readyForInput'] === true,
       reusable: mainComp['@_reusable'] === 'true' || mainComp['@_reusable'] === true,
       ...(replacementPathType ? { replacement_path: replacementPathType } : {}),
+      ...(variableType === 'Text' && replacementPathType
+        ? {
+            replacement_interval: (replacementPath?.['@_interval'] as string) ?? '',
+            offset_start: Number(replacementPath?.['@_offsetStart'] ?? 0),
+            offset_length: Number(replacementPath?.['@_offsetLength'] ?? 0),
+            ...(replacementPath?.['@_name'] ? { replacement_variable: replacementPath['@_name'] } : {}),
+          }
+        : {}),
       ...(hierarchyName ? { hierarchy_name: hierarchyName } : {}),
       ...(hierarchyVersion ? { hierarchy_version: hierarchyVersion } : {}),
       ...(hierarchyDateTo ? { hierarchy_date_to: hierarchyDateTo } : {}),

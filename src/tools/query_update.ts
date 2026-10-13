@@ -457,6 +457,61 @@ function findMemberReferencingComponent(doc: string, componentId: string): strin
  *   GET full document (+ timestamp header) → lock → PUT mutated document with
  *   lockHandle + timestamp → forceCacheUpdate GET → unlock.
  */
+const DESCRIPTION_RE = /<Qry:description\b([^>]*?)(\/>|>([\s\S]*?)<\/Qry:description>)/g;
+
+/** Names written as &NAME& in the descriptions of a query document. */
+export function textVariableTokens(doc: string): string[] {
+  const names = new Set<string>();
+  for (const m of doc.matchAll(DESCRIPTION_RE)) {
+    const value = m[1].match(/\bvalue="([^"]*)"/)?.[1] ?? '';
+    for (const t of value.matchAll(/&amp;([A-Za-z0-9_/]+)&amp;/g)) names.add(t[1].toUpperCase());
+  }
+  return [...names];
+}
+
+/**
+ * Reference text variables from every description that names them as &NAME&. BW replaces a
+ * text variable only when the description lists the variable's id as well; with the name
+ * alone the query saves as consistent and shows the literal &NAME& at runtime.
+ */
+export function bindDescriptionVariables(doc: string, uids: Map<string, string>): string {
+  return doc.replace(DESCRIPTION_RE, (whole, attrs: string, _end: string, body: string | undefined) => {
+    const value = attrs.match(/\bvalue="([^"]*)"/)?.[1] ?? '';
+    const inner = body ?? '';
+    const missing = [...value.matchAll(/&amp;([A-Za-z0-9_/]+)&amp;/g)]
+      .map((t) => uids.get(t[1].toUpperCase()))
+      .filter((uid): uid is string => !!uid && !inner.includes(`<Qry:variables>${uid}</Qry:variables>`));
+    if (missing.length === 0) return whole;
+    const added = [...new Set(missing)].map((uid) => `<Qry:variables>${uid}</Qry:variables>`).join('');
+    return `<Qry:description${attrs}>${inner}${added}</Qry:description>`;
+  });
+}
+
+/**
+ * Embed and reference the text variables the descriptions of a query name. A name that is not
+ * a text variable is left as it is: an ampersand pair in a description is not always one.
+ */
+export async function bindTextVariables(client: BwClient, doc: string): Promise<string> {
+  const uids = new Map<string, string>();
+  let out = doc;
+  for (const name of textVariableTokens(doc)) {
+    let resolved: ResolvedVariable;
+    try {
+      resolved = await resolveVariable(client, name);
+    } catch {
+      continue;
+    }
+    if (!/<Qry:type>Text<\/Qry:type>/.test(resolved.subComponentXml)) continue;
+    uids.set(name, resolved.componentId);
+    for (const sc of [{ id: resolved.componentId, xml: resolved.subComponentXml }, ...resolved.extraSubComponents]) {
+      if (!new RegExp(`<Qry:subComponents\\b[^>]*\\bid="${escapeRegex(sc.id)}"`).test(out)) {
+        out = out.replace('<Qry:mainComponent', `${sc.xml}<Qry:mainComponent`);
+      }
+    }
+  }
+  return uids.size ? bindDescriptionVariables(out, uids) : out;
+}
+
 export async function withQueryDocument(
   client: BwClient,
   queryName: string,
@@ -486,9 +541,9 @@ export async function withQueryDocument(
   const lockHandle = lockMatch[1];
 
   try {
-    const mutated = mutate(stripCheckMarkers(getResult.body));
-
     const client2 = createClientFromEnv();
+    const mutated = await bindTextVariables(client2, mutate(stripCheckMarkers(getResult.body)));
+
     const csrf2 = await client2.getCsrfToken();
     const corrNrPrefix = corrNr ? `corrNr=${corrNr}&` : '';
     const putResponse = await client2.rawPut(
@@ -2161,7 +2216,9 @@ async function resolveComponent(
   if (!componentId) {
     throw new Error(`Could not determine the component id for ${kind.toUpperCase()} '${nameUpper}'.`);
   }
-  const description = mainElement.match(/<Qry:description\b[^>]*\bvalue="([^"]*)"/)?.[1] ?? nameUpper;
+  // The attribute value is still escaped; the member builder escapes it again.
+  const rawDescription = mainElement.match(/<Qry:description\b[^>]*\bvalue="([^"]*)"/)?.[1];
+  const description = rawDescription !== undefined ? unescapeXml(rawDescription) : nameUpper;
 
   const subComponentXml = mainElement
     .replace(/^<Qry:mainComponent\b/, '<Qry:subComponents')

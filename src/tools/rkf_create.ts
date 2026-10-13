@@ -2,6 +2,7 @@ import { BwClient, createClientFromEnv, bwSeg, lockSessionHeader, resolveMasterS
 import { resolveLogonUser } from './logon_user.js';
 import { rkfAccept, rkfWriteMediaType, QUERY_ACCEPT_LIST, queryWriteMediaType } from './query.js';
 import { recordedIn } from './elem_write.js';
+import { bindTextVariables } from './query_update.js';
 
 /**
  * bw_create_rkf — create one reusable Restricted Key Figure (TLOGO ELEM, xsi:type
@@ -394,7 +395,7 @@ ${groupsXml.join('\n')}
 
     const putResult = await clientB.rawPut(
       `${basePath}?${corrNrPrefix}lockHandle=${lockHandleB}`,
-      putBody,
+      await bindTextVariables(createClientFromEnv(), putBody),
       {
         timestamp: editTimestamp,
         // Accept as a version range — see the POST-create note; the resource speaks a

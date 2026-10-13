@@ -73,7 +73,9 @@ export interface VariableInput {
 
 function attr(s: string, name: string): string | null {
   const m = s.match(new RegExp(`\\b${name}="([^"]*)"`));
-  return m ? m[1] : null;
+  return m
+    ? m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&')
+    : null;
 }
 
 function xmlEscape(s: string): string {

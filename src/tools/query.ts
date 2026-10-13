@@ -1292,6 +1292,8 @@ export function collectVariableUsage(
         walk(value, context, ownId);
         continue;
       }
+      // A description lists the ids of the text variables it names; the name is counted above.
+      if (key === 'Qry:description') continue;
       const children = Array.isArray(value) ? value : [value];
       for (const child of children) {
         const childLabel = child && typeof child === 'object'

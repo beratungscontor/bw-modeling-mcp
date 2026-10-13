@@ -20,6 +20,7 @@ import {
   normalizeExceptionAggregation,
   stripCheckMarkers,
   walkMembers,
+  bindTextVariables,
   assertFormulaVariable,
   type ExceptionAggregation,
   type FormulaNode,
@@ -145,7 +146,8 @@ async function withElementDocument(
   // A save of an unchanged document is not free: it records the whole component,
   // with every element it contains, in the transport request.
   const current = stripCheckMarkers(getResult.body);
-  const mutated = mutate(current);
+  const changed = mutate(current);
+  const mutated = resource === 'variable' ? changed : await bindTextVariables(createClientFromEnv(), changed);
   if (mutated === current) return { messages: [], document: mutated, unchanged: true };
 
   const lockResponse = await client.rawPost(`${path}?action=lock`, '', {
@@ -1934,6 +1936,28 @@ export function applyVariableChanges(
   } else {
     for (const field of ['default_value', 'currency', 'unit'] as const) {
       if (args[field] !== undefined) throw new Error(`${field} can only be changed on a formula variable.`);
+    }
+  }
+
+  if (/<Qry:type>Text<\/Qry:type>/.test(main)) {
+    const current = main.match(/<Qry:procType>([^<]*)<\/Qry:procType>/)?.[1] ?? '';
+    const target = args.processing_type ?? current;
+    // A replacement path sits on the characteristic it shows, the others on 1TEXT, and the
+    // reference characteristic cannot be changed on an existing variable.
+    if ((current === 'ReplacementPath') !== (target === 'ReplacementPath')) {
+      throw new Error(
+        `A text variable cannot change between "ReplacementPath" and "${current === 'ReplacementPath' ? target : current}": ` +
+          'they differ in the characteristic it sits on. Delete the variable and create it again.'
+      );
+    }
+    if (!['ReplacementPath', 'CustomerExit', 'UserEntry'].includes(target)) {
+      throw new Error(`A text variable is filled by "ReplacementPath", "CustomerExit" or "UserEntry", not "${target}".`);
+    }
+    if (args.represents !== undefined && args.represents !== 'SingleValue') {
+      throw new Error('A text variable always represents a single value.');
+    }
+    if (target === 'ReplacementPath' && args.ready_for_input) {
+      throw new Error('A text variable by replacement path cannot be ready for input: every query using it would fail to generate.');
     }
   }
 
