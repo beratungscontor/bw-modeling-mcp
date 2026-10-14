@@ -1,6 +1,6 @@
 # Tools Reference
 
-Every tool the server exposes — 118 in total — with what it does and the parameters that matter.
+Every tool the server exposes — 122 in total — with what it does and the parameters that matter.
 Tools marked _(Read only)_ change nothing in BW; everything else writes, activates, runs, or unlocks.
 A writing tool refuses a parameter it does not declare and names the ones it takes, so a misspelt
 parameter cannot be reported as applied.
@@ -24,7 +24,7 @@ For the architecture and the full endpoint list, see [ARCHITECTURE.md](ARCHITECT
 - [Open Hub Destination](#open-hub-destination) — 1 tool
 - [BW Query — modeling](#bw-query--modeling) — 20 tools
 - [BW Query — data & roles](#bw-query--data--roles) — 7 tools
-- [Integrated Planning](#integrated-planning) — 9 tools
+- [Integrated Planning](#integrated-planning) — 13 tools
 - [Conversion Types](#conversion-types) — 2 tools
 - [Process Chains — authoring](#process-chains--authoring) — 13 tools
 - [Process Chains — monitoring](#process-chains--monitoring) — 3 tools
@@ -404,6 +404,12 @@ Read the Planning Properties (PLCR) of a plan-enabled InfoProvider — key-date 
 ### `bw_get_planning_sequence` _(Read only)_
 Read a Planning Sequence (PLSQ) — the ordered list of planning steps, each with its kind (a planning function, or manual input: an input template that only opens its filter), aggregation level, planning function and filter name. `format: "raw"` returns the unmodified XML.
 
+### `bw_create_planning_sequence`
+Create a planning sequence with its steps in execution order: a planning function with the filter that selects its data, or an input template that only opens a filter for manual input. The InfoArea defaults to that of the aggregation level of the first step, the package to `$TMP`. Saved active. A sequence cannot be executed through the REST API — the modeling tools open the embedded SAP GUI for that.
+
+### `bw_update_planning_sequence`
+Replace the steps of a planning sequence with the list given, in that order, and/or change its description. To add, remove or move one step, read the sequence with `bw_get_planning_sequence` and pass the whole new list.
+
 ### `bw_get_planning_filter` _(Read only)_
 Read a planning filter — the selection a planning sequence step or an input template works on: its aggregation level, the restriction per characteristic (fixed values, ranges, exclusions, variables) and the variables it uses with their type, processing and input settings. A sequence step names its filter. `format: "raw"` returns the unmodified XML.
 
@@ -415,6 +421,12 @@ Change a Planning Function: the characteristic usage (`FIELDS_TO_BE_CHANGED`, `F
 
 ### `bw_create_planning_function`
 Create a Planning Function of a given type (`0RSPL_FORMULA`, `0RSPL_COPY`, a custom type, …) on an aggregation level. The server sets up the parameters of the type and gives every characteristic the usage `NONE`; characteristic usage, conditions and parameter values can be passed in the same call and are applied right after. The InfoArea defaults to that of the aggregation level, the package to `$TMP`. Saved active.
+
+### `bw_create_planning_filter`
+Create a planning filter on an aggregation level with its restrictions in the same call: fixed values, ranges and exclusions per characteristic, and characteristic variables, which are embedded in the filter as the modeling tools do. On a level over a CompositeProvider the bare characteristic name is accepted for the prefixed field, also for the characteristic of a variable.
+
+### `bw_update_planning_filter`
+Change a planning filter: set the values or the variable of a characteristic, replacing its current restriction, remove a restriction, or change the description. Restrictions not named stay as they are; a variable no longer used is dropped from the filter.
 
 ---
 
@@ -530,6 +542,6 @@ Activate one or more BW objects. Handles impact analysis and automatically deact
 Release a lock on a BW object without activating (discard changes).
 
 ### `bw_delete`
-Delete a BW object. Works for aDSO, InfoObject, InfoArea, and other types.
+Delete a BW object. Works for aDSO, InfoObject, InfoArea, and other types, including planning sequences (`plsq`), planning filters (`filter`) and conversion types (`ctrt`, `uomt`); a filter still used by a planning sequence is refused with the sequence named. The lock is released also when the delete is refused.
 
 ---

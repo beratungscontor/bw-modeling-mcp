@@ -244,6 +244,12 @@ src/
     ├── planning.ts       # bw_get_aggregation_level, bw_create_aggregation_level,
     │                     # bw_update_aggregation_level, bw_get_planning_properties,
     │                     # bw_get_planning_sequence, bw_get_planning_function
+    ├── planning_filter_write.ts # bw_create_planning_filter, bw_update_planning_filter — the filter as a
+    │                     # query document: creation lock on the component enqueue, shell POST,
+    │                     # then lock and PUT on /filter/{name}/a
+    ├── planning_sequence_write.ts # bw_create_planning_sequence, bw_update_planning_sequence — shell POST
+    │                     # under a creation lock, then the steps with a PUT on /plsq/{name}/a in a
+    │                     # session of its own
     ├── planning_function_write.ts # bw_create_planning_function, bw_update_planning_function —
     │                              # lock/PUT/unlock on /plse/{name}/a, saved active
     ├── process_chain_monitor.ts # bw_list_process_chain_runs, bw_get_process_chain_run_detail,
@@ -363,11 +369,11 @@ system serves a lower resource version than the fallback.
 | Key Date Derivation Type | `/sap/bw/modeling/thjt/{objname}` | `thjt-v1_0_0+xml` |
 | Data Slices | `/sap/bw/modeling/plds/{pldsnm}` | `plds-v1_0_0+xml` |
 | Planning Functions | `/sap/bw/modeling/plse/{plsenm}/a` (read; lock, PUT and unlock on the same path — the PUT saves active) | `plse-v2_0_0+xml` |
-| Planning Sequence | `/sap/bw/modeling/plsq/{plsqnm}` | `plsq-v1_0_0+xml` |
+| Planning Sequence | `/sap/bw/modeling/plsq/{plsqnm}/a` (create: lock with activity_context CREA, POST the shell, unlock; lock, PUT the steps, unlock — in a fresh session, as the next lock after a PUT in the same session answers HTTP 500; delete: lock DELE, DELETE, unlock on the same path) | `plsq-v1_0_0+xml` |
 | Planning Function Type | `/sap/bw/modeling/plst/{plstnm}/a` (read with the planning function) | `plst-v1_0_0+xml` |
 | Currency Translation Type | `/sap/bw/modeling/ctrt/{name}` (create: lock with activity_context CREA, POST the shell, unlock; lock, PUT on `/a`, unlock — saved active) | `ctrt-v1_0_0+xml` |
 | Unit Conversion Type | `/sap/bw/modeling/uomt/{name}` (as for a currency translation type) | `uomt-v1_0_0+xml` |
-| Planning Filter | `/sap/bw/modeling/filter/{name}/a` (a query document whose main component is the filter) | `filter-v1_9_0+xml` |
+| Planning Filter | `/sap/bw/modeling/filter/{name}/a` (a query document whose main component is the filter; create: compexist for the component id, lock on `/comp/enq/{name}` with CREA, POST the shell, unlock; change: lock, PUT, unlock; delete: lock DELE, DELETE, unlock) | `filter-v1_9_0+xml` |
 
 ### Infrastructure Endpoints
 
