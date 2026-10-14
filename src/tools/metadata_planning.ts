@@ -238,6 +238,12 @@ function elementaryValue(raw: string | undefined): string {
   return v ? `"${v}"` : '"#" (initial / unassigned)';
 }
 
+/** VAL_TYPE "V": the value is the id of a variable, shown by its name. */
+function parameterValue(row: Row, vars: Map<string, string>): string {
+  if (row.VAL_TYPE === 'V') return `variable ${vars.get((row.VALUE ?? '').trim()) ?? row.VALUE}`;
+  return elementaryValue(row.VALUE);
+}
+
 /**
  * Run the statements of one read one after the other.
  *
@@ -366,7 +372,7 @@ export function formatParameterTree(
           // already say — printing it buries the formula under its own bookkeeping.
           if (other.infoObject === FORMULA_SEQNO_IOBJ) continue;
           const vals = ruleValues.filter((v) => v.PARNM === other.name);
-          for (const v of vals) out.push(`${base}  ${label(other.name)} = ${elementaryValue(v.VALUE)}`);
+          for (const v of vals) out.push(`${base}  ${label(other.name)} = ${parameterValue(v, vars)}`);
         }
         continue;
       }
@@ -389,7 +395,7 @@ export function formatParameterTree(
             out.push(`${rowPad}${label(child.name)}  [${describe(PARAM_TYPES, child.type)}]`);
             for (const s of sels) out.push(`${rowPad}  ${formatSelection(s, vars)}`);
           }
-          for (const v of vals) out.push(`${rowPad}${label(child.name)} = ${elementaryValue(v.VALUE)}`);
+          for (const v of vals) out.push(`${rowPad}${label(child.name)} = ${parameterValue(v, vars)}`);
         }
       }
     }
@@ -409,7 +415,7 @@ export function formatParameterTree(
   function renderValues(vals: Row[], sels: Row[], padStr: string): string[] {
     const lines: string[] = [];
     for (const s of sels) lines.push(`${padStr}${formatSelection(s, vars)}`);
-    for (const v of vals) lines.push(`${padStr}= ${elementaryValue(v.VALUE)}`);
+    for (const v of vals) lines.push(`${padStr}= ${parameterValue(v, vars)}`);
     return lines;
   }
 
@@ -472,6 +478,7 @@ export async function readPlanningFunction(client: BwClient, funcName: string): 
   const vars = await resolveVariables(client, [
     ...variableUids(selections, 'LOW', 'HIGH'),
     ...variableUids(realConditions, 'LOW', 'HIGH'),
+    ...values.filter((v) => v.VAL_TYPE === 'V').map((v) => (v.VALUE ?? '').trim()),
     ]);
 
   const defs: ParamDef[] = paramDefs

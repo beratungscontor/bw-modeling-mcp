@@ -622,6 +622,10 @@ export async function bwCreatePlanningFunction(
   options: PlanningFunctionCreateOptions
 ): Promise<string> {
   const nameUpper = funcName.toUpperCase();
+  // RSPLF_SRVNM is 20 characters; a longer name is refused with an object catalog error.
+  if (nameUpper.length > 20) {
+    throw new Error(`The name ${nameUpper} has ${nameUpper.length} characters; a planning function name has at most 20.`);
+  }
   const alvlUpper = options.aggregationLevel.trim().toUpperCase();
   const typeUpper = options.functionType.trim().toUpperCase();
   const pkg = options.package ?? '$TMP';

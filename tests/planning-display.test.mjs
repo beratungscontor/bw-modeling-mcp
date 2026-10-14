@@ -62,3 +62,11 @@ test('a function type lists its class and parameters, table rows nested', async 
   assert.match(text, /P1  \[value; IOBJ_A; default X; variables allowed\]  "First"/);
   assert.match(text, /\n      SEQ  \[value; IOBJ_B\]/);
 });
+
+test('a parameter filled by a variable is shown by the variable name, not its id', async () => {
+  const { formatParameterTree } = await import('../dist/tools/metadata_planning.js');
+  const defs = [{ name: 'FACTOR', position: 1, type: '1', isTable: false, parent: '', infoObject: '' }];
+  const values = [{ RULEPOS: '1', PARNM: 'FACTOR', INDX: '1', VAL_TYPE: 'V', VALUE: 'VARUID1' }];
+  const text = formatParameterTree(defs, values, [], new Map(), new Map([['VARUID1', 'VAR_NAME']])).join('\n');
+  assert.match(text, /= variable VAR_NAME/);
+});

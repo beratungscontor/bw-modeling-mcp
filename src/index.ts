@@ -4728,7 +4728,7 @@ const TOOL_DEFINITIONS = [
         properties: {
           planning_function_name: {
             type: 'string',
-            description: 'Technical name of the new Planning Function (e.g. "OBJECT_NAME").',
+            description: 'Technical name of the new Planning Function, at most 20 characters (e.g. "OBJECT_NAME").',
           },
           label: { type: 'string', description: 'Description of the Planning Function.' },
           aggregation_level: {
