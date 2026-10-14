@@ -1,5 +1,6 @@
 import { BwClient, MEDIA_TYPES, bwSeg, bwSegUpper, lockSessionHeader } from '../bw-client.js';
 import { queryAccept, queryWriteMediaType } from './query.js';
+import { bwDeleteConversionType } from './conversion_type.js';
 
 function parseAtomTitles(xml: string): string[] {
   return [...xml.matchAll(/<atom:title[^>]*>([^<]+)<\/atom:title>/g)].map(m => m[1]);
@@ -109,6 +110,11 @@ export async function bwDelete(
   // Queries (TLOGO ELEM) need a dedicated delete sequence.
   if (typeLower === 'query' || typeLower === 'elem') {
     return bwDeleteQuery(client, objectType, objectName);
+  }
+
+  // Conversion types exist in the active version only and are deleted on the object path.
+  if (typeLower === 'ctrt' || typeLower === 'uomt') {
+    return bwDeleteConversionType(client, typeLower === 'ctrt' ? 'currency' : 'unit', objectName);
   }
 
   const mediaType = MEDIA_TYPES[typeLower] ?? 'application/xml';

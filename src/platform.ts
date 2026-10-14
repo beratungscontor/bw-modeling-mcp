@@ -276,6 +276,10 @@ const COLLECTION_NEEDS: Record<string, string[]> = {
   bw_get_planning_sequence: ['plsq'],
   bw_get_planning_filter: ['filter'],
 
+  // Conversion types. The two resources are published together; both tools serve both.
+  bw_get_conversion_type: ['ctrt'],
+  bw_create_conversion_type: ['ctrt'],
+
   // Query *data*. Classic publishes the `query` collection — query definitions read fine —
   // but not `reporting`, and its `comp/reporting` handler answers every call with "Reporting
   // resource not implemented". That is the REST resource, not BICS, which classic does have. bw_get_filter_values is not here: it reads

@@ -53,6 +53,7 @@ const READ_TOOLS = new Set([
   'bw_get_infosource',
   'bw_get_open_hub',
   'bw_get_planning_function',
+  'bw_get_conversion_type',
   'bw_get_planning_filter',
   'bw_get_planning_properties',
   'bw_get_planning_sequence',

@@ -116,6 +116,19 @@ import {
   type ConditionChange,
   type ParameterChange,
 } from './tools/planning_function_write.js';
+import {
+  bwCreateConversionType,
+  bwGetConversionType,
+  FACTOR_DETERMINATION,
+  PERIOD_HANDLING,
+  RATE_SPECIFIC,
+  SIDE_KINDS,
+  TIME_KINDS,
+  TIME_REFERENCES,
+  type ConversionKind,
+  type ConversionTypeInput,
+} from './tools/conversion_type.js';
+import { resolveLogonUser } from './tools/logon_user.js';
 import { bwListProcessChainRuns, bwGetProcessChainRunDetail, bwListProcessChainLastStatus } from './tools/process_chain_monitor.js';
 import { bwCreateProcessChain, bwUpdateProcessChain, bwActivateProcessChain, bwAddProcessChainErrorLinks, bwSwapProcessChainDtp, bwAppendProcessChainDtp, bwAddProcessChainProgram, bwAddProcessChainEdge, bwRemoveProcessChainEdge, bwRemoveProcessChainStep, bwCreateDecisionVariant, CreateProcessChainParams, UpdateProcessChainParams, EdgeDef, EdgeStatus, TriggerEventConfig } from './tools/processchain_write.js';
 import { bwCreateTransportTask } from './tools/transport.js';
@@ -4761,6 +4774,98 @@ const TOOL_DEFINITIONS = [
       },
     },
     {
+      name: 'bw_get_conversion_type',
+      description:
+        'Read a currency translation type (TLOGO CTRT) or a unit conversion type (TLOGO UOMT): source and ' +
+        'target (fixed, from the record or chosen when converting, from an InfoObject or a variable), and for a ' +
+        'currency the exchange rate type, the exchange rate, the rate type specifics, inverse, and the time ' +
+        'reference; for a unit the factor determination and its InfoObject. Without kind both types are tried.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Technical name of the conversion type (e.g. "OBJECT_NAME").' },
+          kind: { type: 'string', enum: ['currency', 'unit'], description: 'currency or unit; omit to try both.' },
+          format: {
+            type: 'string',
+            enum: ['text', 'raw'],
+            description: '"text" (default): readable summary. "raw": the unmodified XML.',
+          },
+        },
+        required: ['name'],
+      },
+    },
+    {
+      name: 'bw_create_conversion_type',
+      description:
+        'Create a currency translation type (kind "currency", TLOGO CTRT) or a unit conversion type (kind "unit", ' +
+        'TLOGO UOMT), saved straight to the active version — there is no activation step. Every option of the ' +
+        'modeling tools is available. Source and target: data_dependent (the default; for a source the currency ' +
+        'or unit of the record, for a target the one chosen when converting), fixed, infoobject or variable, each ' +
+        'with name. Currency: exactly one of rate_type or rate_type_variable; optionally an exchange rate from an ' +
+        'InfoObject, rate_specific, inverse, in_transformation_only, via_fi_modules (default true), and the time ' +
+        'reference (default the current date). Unit: factors (default T006) and, for the InfoObject-based modes, ' +
+        'factors_infoobject. The answer shows the object as stored, because the backend adjusts some combinations ' +
+        'on save. A description is limited to 40 characters for a currency type and 60 for a unit type. ' +
+        'Delete with bw_delete, object_type "ctrt" or "uomt".',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['currency', 'unit'], description: 'currency translation or unit conversion.' },
+          name: { type: 'string', description: 'Technical name of the new conversion type (e.g. "OBJECT_NAME").' },
+          description: { type: 'string', description: 'Description (at most 40 characters for currency, 60 for unit).' },
+          source: {
+            type: 'object',
+            description: 'Source currency or unit. Default data_dependent.',
+            properties: {
+              kind: { type: 'string', enum: [...SIDE_KINDS] },
+              name: { type: 'string', description: 'The currency or unit (fixed), the InfoObject, or the variable.' },
+              quantity_attribute: { type: 'string', description: 'Unit with kind infoobject: the attribute carrying the quantity.' },
+            },
+            required: ['kind'],
+          },
+          target: {
+            type: 'object',
+            description: 'Target currency or unit. Default data_dependent.',
+            properties: {
+              kind: { type: 'string', enum: [...SIDE_KINDS] },
+              name: { type: 'string', description: 'The currency or unit (fixed), the InfoObject, or the variable.' },
+              quantity_attribute: { type: 'string', description: 'Unit with kind infoobject: the attribute carrying the quantity.' },
+            },
+            required: ['kind'],
+          },
+          rate_type: { type: 'string', description: 'Currency: exchange rate type (e.g. "M").' },
+          rate_type_variable: { type: 'string', description: 'Currency: variable that supplies the exchange rate type, instead of rate_type.' },
+          exchange_rate_infoobject: { type: 'string', description: 'Currency: InfoObject that supplies the exchange rate; omit for the rate from the rate tables.' },
+          rate_specific: { type: 'string', enum: [...RATE_SPECIFIC], description: 'Currency: which rate of the rate type to use (default No).' },
+          inverse: { type: 'boolean', description: 'Currency: use the inverse rate.' },
+          in_transformation_only: { type: 'boolean', description: 'Currency: offered in transformations only.' },
+          via_fi_modules: { type: 'boolean', description: 'Currency: translate through the FI modules (default true).' },
+          time: {
+            type: 'object',
+            description: 'Currency: the time reference of the rate. Default: the current date.',
+            properties: {
+              kind: { type: 'string', enum: [...TIME_KINDS] },
+              date: { type: 'string', description: 'key_date: the date (YYYY-MM-DD).' },
+              variable: { type: 'string', description: 'variable: the date variable.' },
+              characteristic: { type: 'string', description: 'time_characteristic: the time characteristic (e.g. "0CALMONTH").' },
+              reference: { type: 'string', enum: [...TIME_REFERENCES], description: 'time_characteristic: the point of the period.' },
+              shift: { type: 'number', description: 'time_characteristic: shift by this many periods.' },
+              shift_variable: { type: 'string', description: 'time_characteristic: variable that supplies the shift, instead of shift.' },
+              period_handling: { type: 'string', enum: [...PERIOD_HANDLING], description: 'time_characteristic: how a period is mapped to days.' },
+            },
+            required: ['kind'],
+          },
+          factors: { type: 'string', enum: [...FACTOR_DETERMINATION], description: 'Unit: where the conversion factors come from, in order (default T006).' },
+          factors_infoobject: { type: 'string', description: 'Unit: the InfoObject with its own conversion factors, for the InfoObject-based modes.' },
+          allow_initial_source_value: { type: 'boolean', description: 'Unit: allow an initial source unit.' },
+          no_conversion_if_factors_not_found: { type: 'boolean', description: 'Unit: leave the value unconverted when no factor is found.' },
+          package: { type: 'string', description: 'Package. Defaults to "$TMP".' },
+          transport: { type: 'string', description: 'Transport request number. Required on systems with transport obligation.' },
+        },
+        required: ['kind', 'name', 'description'],
+      },
+    },
+    {
       name: 'bw_get_planning_filter',
       description:
         'Read a planning filter — the selection a planning sequence step or an input template works on. ' +
@@ -6832,6 +6937,19 @@ async function handleToolCall(
 
       case 'bw_get_planning_sequence':
         text = await bwGetPlanningSequence(client, args?.planning_sequence_name as string, (args?.format as 'text' | 'raw') ?? 'text');
+        break;
+
+      case 'bw_get_conversion_type':
+        text = await bwGetConversionType(
+          client,
+          args?.name as string,
+          args?.kind as ConversionKind | undefined,
+          (args?.format as 'text' | 'raw') ?? 'text',
+        );
+        break;
+
+      case 'bw_create_conversion_type':
+        text = await bwCreateConversionType(client, args as unknown as ConversionTypeInput, await resolveLogonUser(client));
         break;
 
       case 'bw_get_planning_filter':
