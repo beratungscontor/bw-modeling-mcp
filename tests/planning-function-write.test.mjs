@@ -114,3 +114,73 @@ test('the reader lists the key figure of every table row', () => {
   const kyf = parsePlseXmlForTest(XML, '').rules[0].parameters[1].children.find((p) => p.name === 'KYF');
   assert.deepEqual(kyf.restrictions, ['ZKYF1', 'ZKYF2']);
 });
+
+// A copy-like function: a key figure selection and a from table with a value and a data selection.
+const COPY_XML =
+  '<?xml version="1.0" encoding="utf-8"?><bwPlanningService:planningService name="ZCOPY" ' +
+  'planningServiceType="ZTYPE.plst#//" alvl="ZLEVEL.composite#//" ' +
+  'xmlns:bwPlanningService="http://www.sap.com/bw/modeling/BwPlanningService.ecore" ' +
+  'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:qry="http://www.sap.com/bw/Query.ecore">' +
+  '<description label="Copy"/>' +
+  '<charUsage infoObject="ZLEVEL.composite#///4ZPROV-ZCHAR" fieldUsage="FIELDS_TO_BE_CHANGED" isChangeable="true"/>' +
+  '<condition>' +
+  '<parameter xsi:type="bwPlanningService:PlanningServiceParameter" name="KYFSEL" multiselection="false" parameterType="5"/>' +
+  '<parameter xsi:type="bwPlanningService:PlanningServiceParameter" name="FROMTAB" multiselection="true" parameterType="4">' +
+  '<parameter xsi:type="bwPlanningService:PlanningServiceParameter" name="FROMSEQNR" multiselection="false" parameterType="1"/>' +
+  '<parameter xsi:type="bwPlanningService:PlanningServiceParameter" name="FROMSEL" multiselection="false" parameterType="3"/>' +
+  '<parameter xsi:type="bwPlanningService:PlanningServiceParameter" name="REFKYF" multiselection="false" parameterType="2"/>' +
+  '</parameter>' +
+  '</condition></bwPlanningService:planningService>';
+
+const KYFS = ['4ZPROV-ZKYF1', '4ZPROV-ZKYF2'];
+
+test('a key figure selection takes every key figure or named ones, by their bare names', async () => {
+  const all = (await applyPlanningFunctionChanges(client, COPY_XML, { parameters: [{ name: 'KYFSEL', key_figures: ['*'] }] }, KYFS)).xml;
+  assert.match(all, /name="KYFSEL"[^>]*allKeyfigures="true"\/>/);
+  const named = (await applyPlanningFunctionChanges(client, all, { parameters: [{ name: 'KYFSEL', key_figures: ['ZKYF2'] }] }, KYFS)).xml;
+  assert.doesNotMatch(named, /allKeyfigures/);
+  assert.match(named, /<restriction characteristic="ZLEVEL\.composite#\/\/\/4ZPROV-ZKYF2" initialValuesUsed="true"\/><\/parameter>/);
+  await assert.rejects(
+    applyPlanningFunctionChanges(client, COPY_XML, { parameters: [{ name: 'KYFSEL', key_figures: ['ZNONE'] }] }, KYFS),
+    /not on the aggregation level/
+  );
+});
+
+test('a data selection is written per table row, and the next row is added after the last', async () => {
+  const sel = (v) => [{ characteristic: 'ZCHAR', constraints: [{ value: v }] }];
+  let { xml } = await applyPlanningFunctionChanges(client, COPY_XML, { parameters: [{ name: 'FROMSEL', selection: sel('A'), row: 1 }] }, KYFS);
+  ({ xml } = await applyPlanningFunctionChanges(client, xml, { parameters: [{ name: 'FROMSEL', selection: sel('B'), row: 2 }] }, KYFS));
+  const sets = [...xml.matchAll(/<fieldSelectionSet>([\s\S]*?)<\/fieldSelectionSet>/g)].map((m) => m[1]);
+  assert.equal(sets.length, 2);
+  assert.match(sets[0], /<FieldSelection characteristic="ZLEVEL\.composite#\/\/\/4ZPROV-ZCHAR"><constraint selectionType="areaSelection" operator="Equal">.*<qry:value>A<\/qry:value>/);
+  assert.match(sets[1], /<qry:value>B<\/qry:value>/);
+  await assert.rejects(
+    applyPlanningFunctionChanges(client, xml, { parameters: [{ name: 'FROMSEL', selection: sel('C') }] }, KYFS),
+    /has 2 rows/
+  );
+  await assert.rejects(
+    applyPlanningFunctionChanges(client, xml, { parameters: [{ name: 'FROMSEL', selection: sel('C'), row: 4 }] }, KYFS),
+    /row 4 does not exist \(3 adds one\)/
+  );
+});
+
+test('an InfoObject parameter names one key figure per row', async () => {
+  const { xml } = await applyPlanningFunctionChanges(client, COPY_XML, { parameters: [{ name: 'REFKYF', key_figures: ['ZKYF1'], row: 1 }] }, KYFS);
+  assert.match(xml, /name="REFKYF"[^>]*><restriction characteristic="ZLEVEL\.composite#\/\/\/4ZPROV-ZKYF1" initialValuesUsed="true"\/><\/parameter>/);
+  await assert.rejects(
+    applyPlanningFunctionChanges(client, COPY_XML, { parameters: [{ name: 'REFKYF', key_figures: ['ZKYF1', 'ZKYF2'] }] }, KYFS),
+    /exactly one key figure/
+  );
+});
+
+test('a parameter takes exactly one kind of input, and the kind must fit the parameter', async () => {
+  await assert.rejects(
+    applyPlanningFunctionChanges(client, COPY_XML, { parameters: [{ name: 'FROMSEL', value: 'A', selection: [] }] }, KYFS),
+    /exactly one of/
+  );
+  await assert.rejects(applyPlanningFunctionChanges(client, COPY_XML, { parameters: [{ name: 'FROMSEL', value: 'A' }] }, KYFS), /pass selection/);
+  await assert.rejects(
+    applyPlanningFunctionChanges(client, COPY_XML, { parameters: [{ name: 'FROMSEQNR', key_figures: ['*'] }] }, KYFS),
+    /not a key figure selection/
+  );
+});

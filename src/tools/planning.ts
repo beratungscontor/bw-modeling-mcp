@@ -61,7 +61,7 @@ interface AggLevelInfo {
   keyfigures: AggLevelKeyfigure[];
 }
 
-function parseAggLevelXml(xml: string, status: string): AggLevelInfo {
+export function parseAggLevelXml(xml: string, status: string): AggLevelInfo {
   const rootMatch = xml.match(/<Alvl:aggregationLevel([^>]*)>/);
   if (!rootMatch) {
     throw new Error('Unexpected XML: <Alvl:aggregationLevel> root element not found.');
@@ -1036,9 +1036,20 @@ interface PlseParameter {
   selections: PlseSelectionRange[];
   /** A data-selection parameter (type 3) restricts characteristics, not a single value. */
   fieldSelections: PlseCondition[];
-  /** A key figure selection (type 2) names one key figure per table row. */
+  /** Key figures named by a key figure selection (type 5) or, one per table row, an InfoObject parameter (type 2). */
   restrictions: string[];
+  /** A key figure selection flagged for every key figure of the level. */
+  allKeyFigures: boolean;
 }
+
+/** parameterType of a planning function parameter. */
+const PARAMETER_TYPES: Record<string, string> = {
+  '1': 'value',
+  '2': 'key figure',
+  '3': 'data selection',
+  '4': 'table',
+  '5': 'key figure selection',
+};
 
 interface PlseCharUsage {
   infoObject: string;
@@ -1189,6 +1200,7 @@ function parsePlseParameters(xml: string): PlseParameter[] {
       name: attr(attrs, 'name'),
       parameterType: attr(attrs, 'parameterType'),
       multiselection: attr(attrs, 'multiselection'),
+      allKeyFigures: attr(attrs, 'allKeyfigures') === 'true',
     };
 
     if (match[2] === '/>') {
@@ -1265,7 +1277,7 @@ function formatPlseParameters(params: PlseParameter[], indent: number): string[]
   const pad = '  '.repeat(indent);
 
   for (const p of params) {
-    let header = `${pad}${p.name}  [type ${p.parameterType}]`;
+    let header = `${pad}${p.name}  [${PARAMETER_TYPES[p.parameterType] ?? `type ${p.parameterType}`}]`;
     if (p.multiselection === 'true') header += '  [multi]';
     lines.push(header);
 
@@ -1288,6 +1300,7 @@ function formatPlseParameters(params: PlseParameter[], indent: number): string[]
       }
     }
 
+    if (p.allKeyFigures) lines.push(`${pad}  = all key figures`);
     for (const r of p.restrictions) {
       lines.push(`${pad}  = ${r}`);
     }
@@ -1389,6 +1402,7 @@ const PARAMETER_KINDS: Record<string, string> = {
   SelectionParameter: 'selection',
   KeyfigureSelectionParameter: 'key figure selection',
   StructureParameter: 'table',
+  InfoObjectParameter: 'InfoObject',
 };
 
 function typeParameter(attrs: string, body: string, children: FunctionTypeParameter[]): FunctionTypeParameter {

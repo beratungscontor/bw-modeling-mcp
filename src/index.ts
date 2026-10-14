@@ -311,7 +311,9 @@ const PLSE_CHANGE_PROPERTIES = {
       'Applies to single-value parameters; a nested one may be named by its path ' +
       '("STRUCTURE/FIELD") or, where unambiguous, by its own name. Pass value for a constant ' +
       'or variable for a variable reference. The FOX code of a FORMULA function is the value ' +
-      'of its FLINE parameter. Data-selection parameters are not changed by this tool.',
+      'of its FLINE parameter. A key figure selection (e.g. KYFSEL) takes key_figures, a data ' +
+      'selection (e.g. the from and to selections of a copy) takes selection. In a table parameter ' +
+      'row n of every field belongs together; row = current rows + 1 adds a row.',
     items: {
       type: 'object',
       properties: {
@@ -323,6 +325,29 @@ const PLSE_CHANGE_PROPERTIES = {
           description:
             'For a table parameter: the 1-based table row to set. Required when the parameter ' +
             'holds several values; the key figure selection next to it says which row is which.',
+        },
+        key_figures: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'For a key figure selection: the key figures (e.g. "KYF_NAME"), or ["*"] for all of them.',
+        },
+        selection: {
+          type: 'array',
+          description:
+            'For a data selection: the restriction per characteristic, in the same form as conditions. ' +
+            'Replaces the selection of the row.',
+          items: {
+            type: 'object',
+            properties: {
+              characteristic: { type: 'string', description: 'Characteristic name (e.g. "IOBJ_NAME").' },
+              constraints: {
+                type: 'array',
+                items: { type: 'object' },
+                description: 'As in conditions: operator, value, to_value, variable, exclude.',
+              },
+            },
+            required: ['characteristic'],
+          },
         },
       },
       required: ['name'],
