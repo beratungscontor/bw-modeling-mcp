@@ -55,9 +55,9 @@ function characteristicCreateXml(o: {
 
 // ── KYF: objectSpecificDataType → keyfigureType / semantics ──────────────────
 
-const KYF_TYPE_MAP: Record<string, { keyfigureType: string; semantics: string }> = {
+export const KYF_TYPE_MAP: Record<string, { keyfigureType: string; semantics: string }> = {
   DEC:  { keyfigureType: 'NUM', semantics: 'NUM' },
-  CURR: { keyfigureType: 'AMT', semantics: 'AMT' },
+  CURR: { keyfigureType: 'AMO', semantics: 'AMO' },
   FLTP: { keyfigureType: 'NUM', semantics: 'NUM' },
   QUAN: { keyfigureType: 'QUA', semantics: 'QUA' },
   DATS: { keyfigureType: 'DAT', semantics: 'DAT' },

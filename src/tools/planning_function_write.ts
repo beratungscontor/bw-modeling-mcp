@@ -354,6 +354,16 @@ export async function applyPlanningFunctionChanges(
     const re = new RegExp(`<charUsage\\b[^>]*?\\binfoObject="[^"]*/${escapeRegex(name)}"[^>]*?/?>`);
     const tag = xml.match(re)?.[0];
     if (!tag) throw new Error(`Characteristic usage of ${name} not found in Planning Function ${funcName}.`);
+    // The backend decides per function type and level which characteristics a function may
+    // change — a forecast only its time characteristic — and saves anything else with a
+    // follow-up error that points elsewhere.
+    if (change.usage === 'FIELDS_TO_BE_CHANGED' && /\bisChangeable="false"/.test(tag)) {
+      const changeable = [...xml.matchAll(/<charUsage\b[^>]*?\binfoObject="([^"]*)"[^>]*?\bisChangeable="true"/g)].map((m) => refName(m[1]));
+      throw new Error(
+        `${name} cannot be a characteristic to be changed in Planning Function ${funcName}: its function type ` +
+        `does not allow it on this aggregation level. Changeable: ${changeable.join(', ') || 'none'}.`
+      );
+    }
     xml = xml.replace(tag, tag.replace(/\bfieldUsage="[^"]*"/, `fieldUsage="${change.usage}"`));
     applied.push(`char_usage ${name} = ${change.usage}`);
   }

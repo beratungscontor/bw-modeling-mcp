@@ -184,3 +184,11 @@ test('a parameter takes exactly one kind of input, and the kind must fit the par
     /not a key figure selection/
   );
 });
+
+test('a characteristic the function type may not change is refused before saving', async () => {
+  const xml = XML.replace('/ZOTHER" fieldUsage="FIELDS_TO_BE_CHANGED" isChangeable="true"', '/ZOTHER" fieldUsage="NONE" isChangeable="false"');
+  await assert.rejects(
+    applyPlanningFunctionChanges(client, xml, { charUsage: [{ characteristic: 'ZOTHER', usage: 'FIELDS_TO_BE_CHANGED' }] }),
+    /ZOTHER cannot be a characteristic to be changed.*Changeable: 0CALMONTH, 4ZPROV-ZCHAR/
+  );
+});

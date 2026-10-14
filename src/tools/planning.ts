@@ -860,6 +860,13 @@ export async function bwGetPlanningProperties(
   try {
     result = await client.get(path, MEDIA_TYPES['plcr']);
   } catch (err) {
+    // A provider whose planning properties were never maintained has no PLCR object at all.
+    if (/HTTP 404/.test((err as Error).message)) {
+      return (
+        `${providerName.toUpperCase()} has no planning properties: no characteristic relationships, data slices or ` +
+        'settings were ever maintained for it. A planning-enabled provider works without them.'
+      );
+    }
     // Seen for providers with an exit data slice: the resource fails to build, the tables are fine.
     if (format === 'raw' || !/HTTP 5\d\d/.test((err as Error).message)) throw err;
     return [

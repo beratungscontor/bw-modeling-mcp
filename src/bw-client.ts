@@ -26,6 +26,8 @@ export const MEDIA_TYPES: Record<string, string> = {
   plsq: 'application/vnd.sap.bw.modeling.plsq-v1_0_0+xml',
   plse: 'application/vnd.sap.bw.modeling.plse-v2_0_0+xml',
   plst: 'application/vnd.sap.bw.modeling.plst-v1_0_0+xml',
+  ctrt: 'application/vnd.sap.bw.modeling.ctrt-v1_0_0+xml',
+  uomt: 'application/vnd.sap.bw.modeling.uomt-v1_0_0+xml',
   filter: 'application/vnd.sap.bw.modeling.filter-v1_9_0+xml',
   valuehelp: 'application/vnd.sap-bw-modeling.valuehelp2-v1_1_0+xml',
 };
@@ -696,10 +698,19 @@ export class BwClient {
    * search filter made the following, valid search fail too. Without the cookie the next
    * request opens a fresh context under the same logon. Nothing held in the old context
    * survives the dump anyway, a lock included, so dropping the cookie loses nothing.
+   *
+   * The context id alone is not enough: with the logon's session cookie still sent, a lock
+   * after the dump runs without a stateful context and is gone before the request that uses
+   * its handle ("lock handle could not be created", HTTP 423). The session cookie and the CSRF
+   * token bound to it go as well, so the next request logs on afresh.
    */
   private discardSessionContext(): void {
     if (this.frozenCookies.has('sap-contextid')) return;
     this.cookies.delete('sap-contextid');
+    for (const name of [...this.cookies.keys()]) {
+      if (/^SAP_SESSIONID_/.test(name) && !this.frozenCookies.has(name)) this.cookies.delete(name);
+    }
+    this.clearCsrfToken();
   }
 
   /**
