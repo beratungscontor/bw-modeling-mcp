@@ -133,6 +133,7 @@ import { bwCreatePlanningSequence, bwUpdatePlanningSequence, type CreatePlanning
 import { bwCreatePlanningFilter, bwUpdatePlanningFilter, type CreatePlanningFilterArgs, type UpdatePlanningFilterArgs } from './tools/planning_filter_write.js';
 import { bwListProcessChainRuns, bwGetProcessChainRunDetail, bwListProcessChainLastStatus } from './tools/process_chain_monitor.js';
 import { bwCreateProcessChain, bwUpdateProcessChain, bwActivateProcessChain, bwAddProcessChainErrorLinks, bwSwapProcessChainDtp, bwAppendProcessChainDtp, bwAddProcessChainProgram, bwAddProcessChainEdge, bwRemoveProcessChainEdge, bwRemoveProcessChainStep, bwCreateDecisionVariant, CreateProcessChainParams, UpdateProcessChainParams, EdgeDef, EdgeStatus, TriggerEventConfig } from './tools/processchain_write.js';
+import { bwStartProcessChain, MAX_WAIT_SECONDS } from './tools/process_chain_run.js';
 import { bwCreateTransportTask } from './tools/transport.js';
 
 // Map the snake_case trigger_event tool argument to the TriggerEventConfig shape.
@@ -5513,6 +5514,30 @@ const TOOL_DEFINITIONS = [
       },
     },
     {
+      name: 'bw_start_process_chain',
+      description:
+        'Start a process chain once, now, as the BW/4HANA Cockpit does with "Execute" (asynchronous): ' +
+        'the run goes to the background under the technical user of the chain, independent of its start condition, ' +
+        'and its scheduling is left unchanged. The chain must be active. ' +
+        'Returns the log ID of the run, its status and the messages of the steps reached so far. ' +
+        'With wait_seconds the tool waits for the run to finish, checking every 5 seconds; otherwise it answers right after the start. ' +
+        'Follow the run with bw_get_process_chain_run_detail (chain_id + the returned log_id) for step-level details and error long texts.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: 'Process chain technical name (e.g. "CHAIN_NAME"). Case-insensitive.',
+          },
+          wait_seconds: {
+            type: 'number',
+            description: `Wait up to this many seconds for the run to end before answering (0 = answer right after the start, the default; at most ${MAX_WAIT_SECONDS}).`,
+          },
+        },
+        required: ['name'],
+      },
+    },
+    {
       name: 'bw_create_decision_variant',
       description:
         'Create a DECISION process variant (a standalone TLOGO object) for use as a branch/decision step in a Process Chain, via the BW/4HANA Cockpit REST API. ' +
@@ -7229,6 +7254,10 @@ async function handleToolCall(
 
       case 'bw_activate_process_chain':
         text = await bwActivateProcessChain(client, args?.name as string);
+        break;
+
+      case 'bw_start_process_chain':
+        text = await bwStartProcessChain(client, args?.name as string, (args?.wait_seconds as number | undefined) ?? 0);
         break;
 
       case 'bw_add_process_chain_error_links':

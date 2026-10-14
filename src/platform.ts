@@ -323,6 +323,9 @@ const BW4_ONLY: Record<string, string> = {
   // Process variants — /sap/bw4/v1/modeling/processtypes.
   bw_get_process_variant: 'the BW/4HANA process type API (/sap/bw4/v1/modeling/processtypes)',
 
+  // Process chain start — /sap/bw4/v1/monitoring.
+  bw_start_process_chain: 'the BW/4HANA process chain monitoring API (/sap/bw4/v1/monitoring)',
+
   // Process chain monitoring — the RV_C_PCM* / BW4_PCM_SRV OData services.
   bw_list_process_chain_runs: 'the process chain monitoring OData services (RV_C_PCM*)',
   bw_get_process_chain_run_detail: 'the process chain monitoring OData services (RV_C_PCM*)',

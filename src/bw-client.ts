@@ -1074,7 +1074,7 @@ export class BwClient {
    */
   async rawPost(
     url: string,
-    body: string,
+    body: string | Buffer,
     headers: Record<string, string>
   ): Promise<{ body: string; headers: Record<string, string> }> {
     const freshHttp = axios.create({
