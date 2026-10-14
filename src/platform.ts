@@ -274,7 +274,11 @@ const COLLECTION_NEEDS: Record<string, string[]> = {
   bw_create_planning_function: ['plse'],
   bw_get_planning_properties: ['plcr'],
   bw_get_planning_sequence: ['plsq'],
+  bw_create_planning_sequence: ['plsq'],
+  bw_update_planning_sequence: ['plsq'],
   bw_get_planning_filter: ['filter'],
+  bw_create_planning_filter: ['filter'],
+  bw_update_planning_filter: ['filter'],
 
   // Conversion types. The two resources are published together; both tools serve both.
   bw_get_conversion_type: ['ctrt'],

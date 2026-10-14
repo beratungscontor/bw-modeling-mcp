@@ -129,6 +129,8 @@ import {
   type ConversionTypeInput,
 } from './tools/conversion_type.js';
 import { resolveLogonUser } from './tools/logon_user.js';
+import { bwCreatePlanningSequence, bwUpdatePlanningSequence, type CreatePlanningSequenceArgs, type UpdatePlanningSequenceArgs } from './tools/planning_sequence_write.js';
+import { bwCreatePlanningFilter, bwUpdatePlanningFilter, type CreatePlanningFilterArgs, type UpdatePlanningFilterArgs } from './tools/planning_filter_write.js';
 import { bwListProcessChainRuns, bwGetProcessChainRunDetail, bwListProcessChainLastStatus } from './tools/process_chain_monitor.js';
 import { bwCreateProcessChain, bwUpdateProcessChain, bwActivateProcessChain, bwAddProcessChainErrorLinks, bwSwapProcessChainDtp, bwAppendProcessChainDtp, bwAddProcessChainProgram, bwAddProcessChainEdge, bwRemoveProcessChainEdge, bwRemoveProcessChainStep, bwCreateDecisionVariant, CreateProcessChainParams, UpdateProcessChainParams, EdgeDef, EdgeStatus, TriggerEventConfig } from './tools/processchain_write.js';
 import { bwCreateTransportTask } from './tools/transport.js';
@@ -1349,6 +1351,8 @@ const TOOL_DEFINITIONS = [
         'Sequence: lock (with /m) → DELETE → unlock. No activation needed — deletion is immediate. ' +
         'Queries (object_type "query", alias "elem") use a dedicated delete sequence; deleting a query ' +
         'does NOT delete the reusable components (variables, CKFs, RKFs) it references — only the query itself. ' +
+        'Planning sequences ("plsq"), planning filters ("filter") and conversion types ("ctrt", "uomt") are ' +
+        'deleted on their active path; a filter still used by a sequence is refused with the sequence named. ' +
         'Dependency note: delete aDSOs before their InfoObjects, not the other way around.',
       inputSchema: {
         type: 'object',
@@ -4889,6 +4893,164 @@ const TOOL_DEFINITIONS = [
       },
     },
     {
+      name: 'bw_create_planning_sequence',
+      description:
+        'Create a planning sequence with its steps in execution order: planning functions, each with the filter ' +
+        'that selects its data, and input templates. Saved active. The InfoArea defaults to that of the aggregation ' +
+        'level of the first step, the package to "$TMP".',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sequence_name: { type: 'string', description: 'Technical name of the new sequence (e.g. "OBJECT_NAME").' },
+          description: { type: 'string', description: 'Description of the sequence.' },
+          steps: {
+            type: 'array',
+            description: 'The steps in execution order. A planning_function step runs the function on the data the filter selects; an input_template step only opens that selection for manual input.',
+            items: {
+              type: 'object',
+              properties: {
+                type: { type: 'string', enum: ['planning_function', 'input_template'] },
+                aggregation_level: { type: 'string', description: 'Aggregation level of the step (e.g. "OBJECT_NAME").' },
+                planning_function: { type: 'string', description: 'planning_function steps: the planning function, defined on that level.' },
+                filter: { type: 'string', description: 'Planning filter of the step (bw_create_planning_filter).' },
+              },
+              required: ['type', 'aggregation_level', 'filter'],
+            },
+          },
+          info_area: { type: 'string', description: 'InfoArea. Defaults to that of the first aggregation level.' },
+          package: { type: 'string', description: 'Package. Defaults to "$TMP".' },
+          transport: { type: 'string', description: 'Transport request number. Required on systems with transport obligation.' },
+        },
+        required: ['sequence_name', 'description', 'steps'],
+      },
+    },
+    {
+      name: 'bw_update_planning_sequence',
+      description:
+        'Change a planning sequence: replace its steps with the list given, in that order, and/or change its ' +
+        'description. To add, remove or move one step, read the sequence with bw_get_planning_sequence and pass ' +
+        'the whole new list.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sequence_name: { type: 'string', description: 'Technical name of the sequence (e.g. "OBJECT_NAME").' },
+          steps: {
+            type: 'array',
+            description: 'The steps in execution order. A planning_function step runs the function on the data the filter selects; an input_template step only opens that selection for manual input.',
+            items: {
+              type: 'object',
+              properties: {
+                type: { type: 'string', enum: ['planning_function', 'input_template'] },
+                aggregation_level: { type: 'string', description: 'Aggregation level of the step (e.g. "OBJECT_NAME").' },
+                planning_function: { type: 'string', description: 'planning_function steps: the planning function, defined on that level.' },
+                filter: { type: 'string', description: 'Planning filter of the step (bw_create_planning_filter).' },
+              },
+              required: ['type', 'aggregation_level', 'filter'],
+            },
+          },
+          description: { type: 'string', description: 'New description.' },
+          transport: { type: 'string', description: 'Transport request number. Required on systems with transport obligation.' },
+        },
+        required: ['sequence_name'],
+      },
+    },
+    {
+      name: 'bw_create_planning_filter',
+      description:
+        'Create a planning filter on an aggregation level — the selection a planning sequence step or an input ' +
+        'template works on — with its restrictions in the same call: fixed values, ranges and exclusions per ' +
+        'characteristic, and characteristic variables. A variable is embedded in the filter as the modeling tools do. ' +
+        'Saved active; read it back with bw_get_planning_filter.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          filter_name: { type: 'string', description: 'Technical name of the new filter (e.g. "OBJECT_NAME").' },
+          aggregation_level: { type: 'string', description: 'Aggregation level the filter is defined on (e.g. "OBJECT_NAME").' },
+          description: { type: 'string', description: 'Description of the filter.' },
+          operations: {
+            type: 'array',
+            description: 'Restrictions to set or remove, applied in order.',
+            items: {
+              type: 'object',
+              properties: {
+                action: { type: 'string', enum: ['set_values', 'set_variable', 'remove'] },
+                infoobject: {
+                  type: 'string',
+                  description: 'Characteristic (e.g. "IOBJ_NAME"); on a CompositeProvider level the bare name is accepted as well as the prefixed one. For set_variable it defaults to the characteristic of the variable.',
+                },
+                values: {
+                  type: 'array',
+                  description: 'set_values: the values, each a single value or, with high, a range; exclude makes it an exclusion.',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      value: { type: 'string' },
+                      high: { type: 'string', description: 'Upper bound of a range.' },
+                      exclude: { type: 'boolean' },
+                      internal_value: { type: 'string', description: 'Internal format when it differs from value.' },
+                      high_internal_value: { type: 'string' },
+                    },
+                    required: ['value'],
+                  },
+                },
+                variable_name: { type: 'string', description: 'set_variable: the characteristic variable (e.g. "VAR_NAME").' },
+              },
+              required: ['action'],
+            },
+          },
+          package: { type: 'string', description: 'Package. Defaults to "$TMP".' },
+          transport: { type: 'string', description: 'Transport request number. Required on systems with transport obligation.' },
+        },
+        required: ['filter_name', 'aggregation_level', 'description'],
+      },
+    },
+    {
+      name: 'bw_update_planning_filter',
+      description:
+        'Change a planning filter: set the values or the variable of a characteristic (replacing its current ' +
+        'restriction), remove a restriction, or change the description. Restrictions not named stay as they are.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          filter_name: { type: 'string', description: 'Technical name of the filter (e.g. "OBJECT_NAME").' },
+          operations: {
+            type: 'array',
+            description: 'Restrictions to set or remove, applied in order.',
+            items: {
+              type: 'object',
+              properties: {
+                action: { type: 'string', enum: ['set_values', 'set_variable', 'remove'] },
+                infoobject: {
+                  type: 'string',
+                  description: 'Characteristic (e.g. "IOBJ_NAME"); on a CompositeProvider level the bare name is accepted as well as the prefixed one. For set_variable it defaults to the characteristic of the variable.',
+                },
+                values: {
+                  type: 'array',
+                  description: 'set_values: the values, each a single value or, with high, a range; exclude makes it an exclusion.',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      value: { type: 'string' },
+                      high: { type: 'string', description: 'Upper bound of a range.' },
+                      exclude: { type: 'boolean' },
+                      internal_value: { type: 'string', description: 'Internal format when it differs from value.' },
+                      high_internal_value: { type: 'string' },
+                    },
+                    required: ['value'],
+                  },
+                },
+                variable_name: { type: 'string', description: 'set_variable: the characteristic variable (e.g. "VAR_NAME").' },
+              },
+              required: ['action'],
+            },
+          },
+          description: { type: 'string', description: 'New description.' },
+          transport: { type: 'string', description: 'Transport request number. Required on systems with transport obligation.' },
+        },
+        required: ['filter_name'],
+      },
+    },
+    {
       name: 'bw_get_planning_properties',
       description:
         'Read the Planning Properties (TLOGO PLCR) of a plan-enabled InfoProvider (real-time aDSO or ' +
@@ -6950,6 +7112,22 @@ async function handleToolCall(
 
       case 'bw_create_conversion_type':
         text = await bwCreateConversionType(client, args as unknown as ConversionTypeInput, await resolveLogonUser(client));
+        break;
+
+      case 'bw_create_planning_sequence':
+        text = await bwCreatePlanningSequence(client, args as unknown as CreatePlanningSequenceArgs);
+        break;
+
+      case 'bw_update_planning_sequence':
+        text = await bwUpdatePlanningSequence(client, args as unknown as UpdatePlanningSequenceArgs);
+        break;
+
+      case 'bw_create_planning_filter':
+        text = await bwCreatePlanningFilter(client, args as unknown as CreatePlanningFilterArgs);
+        break;
+
+      case 'bw_update_planning_filter':
+        text = await bwUpdatePlanningFilter(client, args as unknown as UpdatePlanningFilterArgs);
         break;
 
       case 'bw_get_planning_filter':

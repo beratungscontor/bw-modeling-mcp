@@ -45,13 +45,13 @@ test('the full tool surface is still registered', async () => {
   // This change is additive — a transport and an auth layer. It must not alter the
   // tools stdio users already depend on.
   const names = await listTools();
-  assert.equal(names.length, 118);
+  assert.equal(names.length, 122);
 });
 
 test('every tool is classified, and the split matches the verb audit', async () => {
   const names = await listTools();
   const write = names.filter((n) => requiredScope(n) === 'write');
-  assert.equal(write.length, 68);
+  assert.equal(write.length, 72);
   assert.equal(names.length - write.length, 50);
 });
 
@@ -98,7 +98,7 @@ function profileOf(platform, collections = []) {
 test('detection failure leaves the full surface in place', async () => {
   // Fail open: a transient error must never hand a caller an empty or half server.
   const names = await listTools();
-  assert.equal(names.length, 118);
+  assert.equal(names.length, 122);
 });
 
 test('a classic verdict filters even when discovery could not be read', async () => {
@@ -118,7 +118,7 @@ test('a classic verdict filters even when discovery could not be read', async ()
 test('BW_PLATFORM=bw4 switches the platform filter off entirely', async () => {
   // The escape hatch for a tool this catalog misjudges.
   const names = await listTools({ BW_PLATFORM: 'bw4' });
-  assert.equal(names.length, 118);
+  assert.equal(names.length, 122);
 });
 
 test('published collections decide, not the platform label', async () => {

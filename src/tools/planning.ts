@@ -1587,6 +1587,11 @@ export async function bwGetPlanningFilter(
   const result = await client.get(`/sap/bw/modeling/filter/${bwSeg(filterName)}/a`, MEDIA_TYPES['filter']);
   if (format === 'raw') return result.body;
   const f = parseQueryDocument(result.body, filterName);
+  // The main component carries its description twice, which leaves the parsed one empty.
+  if (!f['description']) {
+    const desc = result.body.match(/<Qry:mainComponent\b[\s\S]*?<Qry:entityProperties\b[^>]*?\badt[Cc]ore:description="([^"]*)"/)?.[1];
+    if (desc) f['description'] = decodeXmlEntities(desc);
+  }
   const lines = [
     `Planning Filter:   ${f['name']}${f['description'] ? ` — ${f['description']}` : ''}`,
     `Aggregation Level: ${f['infoProvider'] || '(none)'}`,

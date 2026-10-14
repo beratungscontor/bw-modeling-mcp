@@ -100,6 +100,43 @@ async function bwDeleteQuery(
   }
 }
 
+const ACTIVE_PATH_ACCEPT: Record<string, string> = {
+  plsq: 'application/vnd.sap.bw.modeling.plsq-v1_0_0+xml',
+  filter: 'application/vnd.sap.bw.modeling.filter-v1_8_0+xml, application/vnd.sap.bw.modeling.filter-v1_9_0+xml',
+};
+
+/**
+ * Lock for deletion, DELETE and unlock, all on /{type}/{name}/a. The lock is released also when
+ * the delete is refused — for a filter still used by a planning sequence, for instance.
+ */
+async function deleteOnActivePath(client: BwClient, type: 'plsq' | 'filter', objectName: string): Promise<string> {
+  const path = `/sap/bw/modeling/${type}/${bwSeg(objectName.toLowerCase())}/a`;
+  const accept = ACTIVE_PATH_ACCEPT[type];
+  const mediaType = MEDIA_TYPES[type] ?? accept.split(',').pop()!.trim();
+  const lock = await client.rawPost(`${path}?action=lock`, '', {
+    activity_context: 'DELE',
+    Accept: accept,
+    'x-csrf-token': await client.getCsrfToken(),
+    ...lockSessionHeader(),
+  });
+  const handle = lock.body.match(/<LOCK_HANDLE>([^<]+)<\/LOCK_HANDLE>/)?.[1];
+  if (!handle) throw new Error(`No <LOCK_HANDLE> in delete lock response:\n${lock.body}`);
+  let body: string;
+  try {
+    body = (await client.rawDelete(`${path}?lockHandle=${handle}`, { 'Content-Type': mediaType, Accept: mediaType })).body;
+  } finally {
+    await client
+      .rawPost(`${path}?action=unlock`, '', { 'Content-Type': mediaType, Accept: mediaType, 'x-csrf-token': await client.getCsrfToken() })
+      .catch(() => {/* ignore */});
+  }
+  return JSON.stringify({
+    success: true,
+    object_type: type.toUpperCase(),
+    object_name: objectName.toUpperCase(),
+    messages: parseAtomTitles(body),
+  });
+}
+
 export async function bwDelete(
   client: BwClient,
   objectType: string,
@@ -115,6 +152,10 @@ export async function bwDelete(
   // Conversion types exist in the active version only and are deleted on the object path.
   if (typeLower === 'ctrt' || typeLower === 'uomt') {
     return bwDeleteConversionType(client, typeLower === 'ctrt' ? 'currency' : 'unit', objectName);
+  }
+  // Planning sequences and filters are deleted on their active path, as the modeling tools do.
+  if (typeLower === 'plsq' || typeLower === 'filter') {
+    return deleteOnActivePath(client, typeLower, objectName);
   }
 
   const mediaType = MEDIA_TYPES[typeLower] ?? 'application/xml';

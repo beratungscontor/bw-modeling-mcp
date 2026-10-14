@@ -63,7 +63,7 @@ export function descriptionEl(descEsc: string, custom: boolean): string {
  * "Error", throw listing the error titles; "Information" and "Warning" are
  * success and are returned as messages.
  */
-function parseCheckResult(body: string): string[] {
+export function parseCheckResult(body: string): string[] {
   const messages: string[] = [];
   const errorTitles: string[] = [];
   const entryRegex = /<atom:entry>([\s\S]*?)<\/atom:entry>/g;
@@ -827,7 +827,7 @@ export interface UpdateQueryFilterArgs {
  * produces an exclusion restriction. Attribute order follows the traced wire
  * form (see payloads/query_edit_delta2_variables_structures_ranges.md §5).
  */
-function buildFilterToken(v: FilterValue): string {
+export function buildFilterToken(v: FilterValue): string {
   const valueEsc = escapeXml(v.value);
   const internalEsc = escapeXml(v.internal_value ?? v.value);
   const excludeAttr = v.exclude ? ' exclude="true"' : '';
@@ -862,7 +862,7 @@ function buildVariableToken(componentId: string): string {
 }
 
 /** Build a new asFilter StandardFilterSelection block for the InfoObject. */
-function buildFilterSelection(vid: string, iobj: string, tokens: string): string {
+export function buildFilterSelection(vid: string, iobj: string, tokens: string): string {
   return `<Qry:selections xsi:type="Qry:StandardFilterSelection" dimension="${vid}" infoObject="${iobj}" usageType="asFilter">
   <Qry:defaultHint>
     <Qry:type>InfoObject</Qry:type>
@@ -905,7 +905,7 @@ function buildFilterSelection(vid: string, iobj: string, tokens: string): string
  * defaultHint and localDimension, so the new list is inserted before
  * localDimension (or before the closing tag if none is present).
  */
-function setTokensInSelection(selection: string, newTokens: string): string {
+export function setTokensInSelection(selection: string, newTokens: string): string {
   const stripped = selection.replace(/<Qry:tokens\b[^>]*?(\/>|>[\s\S]*?<\/Qry:tokens>)/g, '');
   const locIdx = stripped.indexOf('<Qry:localDimension');
   if (locIdx >= 0) {
@@ -936,24 +936,24 @@ function upsertFilterSelection(doc: string, iobj: string, tokens: string): strin
 }
 
 /** True if a Qry:subComponents element with the given id already exists. */
-function hasSubComponentId(doc: string, id: string): boolean {
+export function hasSubComponentId(doc: string, id: string): boolean {
   return new RegExp(`<Qry:subComponents\\b[^>]*\\bid="${escapeRegex(id)}"`).test(doc);
 }
 
 /** Insert a subComponents element immediately before Qry:mainComponent. */
-function insertSubComponent(doc: string, xml: string): string {
+export function insertSubComponent(doc: string, xml: string): string {
   return spliceBefore(doc, '<Qry:mainComponent', xml, 'subComponent insertion');
 }
 
 /** Remove the Qry:subComponents element with the given id (both forms). */
-function removeSubComponentById(doc: string, id: string): string {
+export function removeSubComponentById(doc: string, id: string): string {
   return doc.replace(/<Qry:subComponents\b[^>]*?(\/>|>[\s\S]*?<\/Qry:subComponents>)/g, (full) => {
     const openTag = full.match(/^<Qry:subComponents\b[^>]*?(?:\/?>)/)?.[0] ?? full;
     return openTag.includes(`id="${id}"`) ? '' : full;
   });
 }
 
-interface ResolvedVariable {
+export interface ResolvedVariable {
   componentId: string;
   characteristic: string;
   subComponentXml: string;
@@ -969,7 +969,7 @@ interface ResolvedVariable {
  * This response shape is a documented working assumption verified on first live
  * call — if it does not hold we stop rather than guess.
  */
-async function resolveVariable(client: BwClient, variableName: string): Promise<ResolvedVariable> {
+export async function resolveVariable(client: BwClient, variableName: string): Promise<ResolvedVariable> {
   const nameLower = variableName.toLowerCase();
   const nameUpper = variableName.toUpperCase();
 
