@@ -224,6 +224,9 @@ src/
     ├── metadata_chainlog.ts # the RSPCLOG reader behind bw_read_metadata_tables: run
     │                     # history (RSPCLOGCHAIN), the steps of one run (RSPCPROCESSLOG)
     │                     # and the last status per chain for a name pattern
+    ├── conversion_type.ts # bw_get_conversion_type, bw_create_conversion_type — currency
+    │                     # translation (CTRT) and unit conversion types (UOMT): shell POST, then
+    │                     # PUT on /a, saved active
     ├── metadata_planning.ts # the planning readers behind bw_read_metadata_tables: PLSE
     │                     # (RSPLF_SRV* — function type, exit class, characteristic usage,
     │                     # conditions, parameter tree built from the type's declaration),
@@ -362,6 +365,8 @@ system serves a lower resource version than the fallback.
 | Planning Functions | `/sap/bw/modeling/plse/{plsenm}/a` (read; lock, PUT and unlock on the same path — the PUT saves active) | `plse-v2_0_0+xml` |
 | Planning Sequence | `/sap/bw/modeling/plsq/{plsqnm}` | `plsq-v1_0_0+xml` |
 | Planning Function Type | `/sap/bw/modeling/plst/{plstnm}/a` (read with the planning function) | `plst-v1_0_0+xml` |
+| Currency Translation Type | `/sap/bw/modeling/ctrt/{name}` (create: lock with activity_context CREA, POST the shell, unlock; lock, PUT on `/a`, unlock — saved active) | `ctrt-v1_0_0+xml` |
+| Unit Conversion Type | `/sap/bw/modeling/uomt/{name}` (as for a currency translation type) | `uomt-v1_0_0+xml` |
 | Planning Filter | `/sap/bw/modeling/filter/{name}/a` (a query document whose main component is the filter) | `filter-v1_9_0+xml` |
 
 ### Infrastructure Endpoints
