@@ -141,12 +141,7 @@ payloads/
 playbooks/
 notes/
 docs/plans/
-# `tests/*`, not `tests/`: git never looks inside an excluded directory, so the
-# negation below cannot re-include anything once the directory itself is excluded.
-tests/*
-# …but track the checked-in test suite. `tests/` stays ignored as a scratch area;
-# only these files are versioned.
-!tests/*.test.mjs
+tests/
 poc/
 .claude/
 CLAUDE.md
