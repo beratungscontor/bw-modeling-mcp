@@ -97,6 +97,11 @@ async function main(): Promise<void> {
         // write tool was ever offered, and an analyst-only caller was refused outright.
         // Holding at least one of the three is checked on `/mcp` instead.
         scopesSupported: [...SCOPES],
+        // A dynamically registered client_id never expires by age. Copilot Studio caches
+        // its client_id and does not register again when it is refused, so the default
+        // 30-day lifetime locked it out until the connection was recreated by hand.
+        // Revocation still works by rotating the signing secret.
+        dcrTtlSeconds: 0,
       },
       allowedOrigins: process.env.BW_ALLOWED_ORIGINS?.split(',').map((s) => s.trim()).filter(Boolean),
       // Never start open: an unauthenticated MCP server in front of a Cloud Connector

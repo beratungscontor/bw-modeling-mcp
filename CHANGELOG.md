@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.8.1] — 2026-10-15
+
+### Fixed
+
+- **Copilot Studio could no longer sign in after 30 days** — a client that registers itself with the hosted server received a `client_id` valid for 30 days. Copilot Studio keeps its `client_id` and does not register again when it is refused, so once the 30 days had passed every sign-in ended with HTTP 400 at `/authorize`; neither restarting the server nor recreating the service bindings helped, only recreating the connection in Copilot Studio. Registrations no longer expire by age. Revoking them all at once still works by rotating the signing secret. A connection already locked out has to be recreated once; after that it keeps working.
+
 ## [1.8.0] — 2026-10-15
 
 ### Added
