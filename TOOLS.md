@@ -1,6 +1,6 @@
 # Tools Reference
 
-Every tool the server exposes — 122 in total — with what it does and the parameters that matter.
+Every tool the server exposes — 123 in total — with what it does and the parameters that matter.
 Tools marked _(Read only)_ change nothing in BW; everything else writes, activates, runs, or unlocks.
 A writing tool refuses a parameter it does not declare and names the ones it takes, so a misspelt
 parameter cannot be reported as applied.
@@ -456,6 +456,9 @@ Replace the step model (nodes and edges) of an existing Process Chain, preservin
 
 ### `bw_activate_process_chain`
 Activate an existing Process Chain. Returns the top-level activation message, severity, and full log.
+
+### `bw_start_process_chain`
+Start a process chain once, now, as the BW/4HANA Cockpit does with "Execute": asynchronously, in the background under the technical user of the chain, independent of its start condition and without changing its scheduling. Returns the log ID of the run, its status and the messages of the steps reached so far. `wait_seconds` (up to 600) waits for the run to end, checking every five seconds. Follow the run with `bw_get_process_chain_run_detail`. The synchronous start is not offered: it runs inside the HTTP request, where an abort message of a step cannot be shown. BW/4HANA only.
 
 ### `bw_append_process_chain_dtp`
 Add one DTP load step (optionally followed by its own DSO activation step) to an existing Process Chain. `before` / `after` place the whole block **in series** relative to an existing step — the target's incoming (or outgoing) edges are rerouted through the block, so the new steps really run ahead of (or behind) it. Without them the block is only appended behind the strand end and runs in parallel to the target's existing successors.

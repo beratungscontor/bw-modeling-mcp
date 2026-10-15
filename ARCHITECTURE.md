@@ -240,6 +240,8 @@ src/
     │                     # that publish no REST resource for them; a cube or DSO also reports
     │                     # its load history (RSSTATMANPART + RSBKREQUEST), a chain its steps
     │                     # and dependencies resolved into execution order
+    ├── logon_user.ts     # the logon user of the system, written as the responsible of new objects
+    │                     # when BW_USER is not set (destination, principal propagation)
     ├── openhub.ts        # bw_get_open_hub
     ├── planning.ts       # bw_get_aggregation_level, bw_create_aggregation_level,
     │                     # bw_update_aggregation_level, bw_get_planning_properties,
@@ -254,6 +256,8 @@ src/
     │                              # lock/PUT/unlock on /plse/{name}/a, saved active
     ├── process_chain_monitor.ts # bw_list_process_chain_runs, bw_get_process_chain_run_detail,
     │                            # bw_list_process_chain_last_status — OData-based monitoring
+    ├── process_chain_run.ts # bw_start_process_chain — asynchronous start through the BW/4HANA
+    │                        # Cockpit monitoring API, then the run status by log ID
     ├── processchain.ts   # bw_get_process_chain — reads RSPC via bw4 API; auto-fetches variant details per step
     ├── processchain_write.ts # bw_create_process_chain, bw_update_process_chain,
     │                         # bw_activate_process_chain, bw_append_process_chain_dtp,
@@ -278,6 +282,8 @@ src/
     ├── remodeling.ts     # bw_list_remodeling_requests, bw_get_remodeling_request,
     │                     # bw_run_remodeling — remodeling monitor via the bw4 manage API
     ├── repository.ts     # bw_list_contents
+    ├── sap_messages.ts   # message long texts, program locations of runtime errors and step logs,
+    │                     # shared by the chain monitor and the write tools
     ├── request_monitor.ts # bw_list_requests, bw_get_request, bw_activate_request — RSPM request monitor / data activation via the bw4 manage API
     ├── rkf_create.ts     # bw_create_rkf — create a reusable Restricted Key Figure (ELEM) via comp/enq + /rkf/<name>/a
     ├── roles.ts          # bw_get_roles, bw_get_role_queries, bw_get_query_roles, bw_set_query_roles
@@ -402,6 +408,8 @@ system serves a lower resource version than the fallback.
 | Create / list process chains | `POST / GET /sap/bc/http/sap/bw4/v1/modeling/processchains` |
 | Read / update a chain | `GET / PUT /sap/bc/http/sap/bw4/v1/modeling/processchains/{name}` |
 | Activate a chain | `POST /sap/bc/http/sap/bw4/v1/modeling/processchains/{name}/activate` |
+| Start a chain (asynchronous) | `POST /sap/bc/http/sap/bw4/v1/monitoring/processchains/{name}/start` |
+| Status of a run | `GET /sap/bc/http/sap/bw4/v1/monitoring/processchainlogs/{logid}/status` |
 | Transport pre-check | `POST /sap/bc/http/sap/bw4/v1/modeling/transports/validateobject` |
 
 ### Process Chain Monitoring Endpoints (OData)

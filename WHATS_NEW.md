@@ -8,6 +8,66 @@ For the complete, structured change history see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## What's New — v1.7.0
+
+### On every release (BW/4HANA and BW 7.5)
+
+**📊 Queries, finished in the tools**
+
+- New `bw_update_query_cells` — reference, formula and help cells in two-structure queries
+- Scaling and local calculation on structure members, exception aggregation on reusable CKFs
+- `bw_get_query` shows cells, selections, calculation and exception aggregation as written
+- `bw_get_query` shows the key date and, for every variable, where the query uses it, so a
+  variable behind the key date no longer looks unused
+
+**🧩 CompositeProviders ready for queries**
+
+- Field groups and name usage (`direct` / `unique_name`) via `bw_update_composite_provider`
+- Fields named after their InfoObject use it directly, so a query finds them by that name
+
+**🧭 Data flow with direction**
+
+- `bw_xref` says which way every transformation and DTP points (upstream / downstream)
+- Aggregation levels and planning functions appear in the where-used list with direction,
+  so the planning input of a provider is visible in its lineage
+
+**🛡️ No silent no-ops**
+
+- A writing tool refuses a parameter it does not declare instead of reporting success
+- `bw_get_transformation` and the classic metadata reader show the aggregation type per rule
+
+**☁️ Hosted on SAP BTP**
+
+- The login no longer asks for the `read` scope alone, so a caller with the developer role
+  gets the write tools in every MCP client, and an analyst-only role is accepted
+
+### BW/4HANA specific
+
+**🔁 Transformation rules**
+
+- Aggregation type per rule into a target key figure (`SUM`, `MOV`, `MIN`, `MAX`, `NOP`)
+  via `bw_update_transformation` — a key figure left on `MOV` in an aggregating
+  transformation no longer has to be fixed by hand
+- Currency and unit conversion on direct rules; rules on currency or unit key figures
+  now activate
+
+### BW 7.5 specific
+
+**🏛️ Lineage where no REST route exists**
+
+- `bw_xref` lists the analysis processes that write to or read from a provider
+- `bw_read_metadata_tables` reads InfoPackages (selections, routines, file settings, load
+  history), the field rules of analysis processes and the global part of transformation routines
+- Classic DSOs, InfoCubes and MultiProviders list their fields with meaning; MultiProvider
+  parts come with their type
+- The DTP filter is readable through an optional helper endpoint in `bw75/`
+- Metadata reads on a BTP-hosted instance no longer fail with HTTP 500 at the start of a call
+
+**On BW/4HANA nothing breaks** — what a classic release needs is added beside the existing
+behaviour, never in place of it.
+
+---
+
 ## What's New — v1.6.0
 
 Modelling on a classic **SAP BW 7.5 on HANA** system is verified in both directions — every

@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.8.0] — 2026-10-15
 
 ### Added
 
@@ -38,6 +38,11 @@
 - **The preview of a DataSource without data failed** — `bw_preview_datasource` answered "Unexpected end of JSON input" when the system returned no rows, as for a file DataSource whose file is not on the application server. It now reports no data.
 - **The master system of new query components came from the URL host** — `bw_create_rkf`, `bw_create_ckf`, `bw_create_structure` and `bw_create_variable` derived it from the host name in `BW_URL`, which says nothing about the system behind a destination or a proxy. They now read the system's logical system name, as the other create tools do. Reported in #34.
 - **Behind Cloud Foundry all clients shared one rate limit** — the OAuth endpoints limit requests per client address, and on SAP BTP that address was the load balancer in front of the app, so one busy client could lock every other user out of the login for an hour. The server now trusts the two proxy hops in front of the app on Cloud Foundry and none elsewhere; `BW_TRUST_PROXY_HOPS` overrides that. Reported in #35.
+- **Dependency advisories** — the lockfile is refreshed within the declared ranges, so `npm audit` no longer reports the advisories a refresh can clear: among them IP spoofing through the proxy trust in `proxy-addr`, which the trusted proxy hops on Cloud Foundry rely on, and the OAuth client advisory of the MCP SDK (now 1.32). What remains comes in through the SAP Cloud SDK, or needs a major version of an XML parser, and has no fix within the declared ranges. Reported in #40, based on #41.
+
+### Notes
+
+- Released as **Agentic Planning Modelling**: with planning functions, filters, sequences and conversion types an agent can build a planning model end to end, and with `bw_start_process_chain` start the chain that runs it.
 
 ## [1.7.1] — 2026-10-01
 

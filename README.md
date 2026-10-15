@@ -61,73 +61,91 @@ A two-part blog series about this project (both available in German and English)
 
 ---
 
-## 🆕 What's New — v1.7.0
+## 🆕 What's New — v1.8.0 · Agentic Planning Modelling
+
+An agent can now build a BW planning model end to end — aggregation level, planning
+functions, filters and the planning sequence that ties them together — and start the
+process chain that runs it.
+
+### BW/4HANA
+
+**🧮 Agentic Planning Modelling**
+
+- New `bw_create_planning_function` / `bw_update_planning_function` — every standard
+  function type, each one created and read back: copy, delete, repost, distribution by key
+  and by reference data, set values, revaluation, formula (FOX), characteristic
+  relationships, currency and unit translation, forecasting
+- Characteristic usage, conditions, parameters (constant or variable), key figure and data
+  selections in the same call; what the function type may not change is refused before saving
+- New `bw_create_planning_filter` / `bw_update_planning_filter` and
+  `bw_create_planning_sequence` / `bw_update_planning_sequence`; `bw_delete` removes both
+- Deeper reads: `bw_get_planning_filter`, characteristic relationships and data slices in
+  `bw_get_planning_properties`, the function type with all its parameters and the block
+  characteristics in `bw_get_planning_function`
+
+**💱 Currency translation and unit conversion types**
+
+- New `bw_get_conversion_type` / `bw_create_conversion_type` — currency translation and
+  unit conversion types with every option of the BW Modeling Tools: source and target fixed,
+  from the record or from a variable; exchange rate type, rate and time reference; unit
+  factors from T006, an InfoObject or SI units; `bw_delete` removes them
+- Not a planning-only object: a translation type created here serves queries,
+  transformation rules and planning functions alike — until now none could be created
+  outside the modeling tools
+
+**▶️ Process chains start on request**
+
+- New `bw_start_process_chain` — starts a chain now, in the background; with
+  `wait_seconds` it waits for the result, and the log ID leads straight into
+  `bw_get_process_chain_run_detail`
+
+**🌳 Hierarchies**
+
+- New `bw_get_hierarchy`, `bw_create_hierarchy`, `bw_update_hierarchy`,
+  `bw_delete_hierarchy` — text and value nodes; replacing the tree keeps the hierarchy ID,
+  so queries that use it keep working
+
+**🔁 Transformations on a transport**
+
+- `bw_create_transformation` takes a transport request and can activate in the same call (#32)
 
 ### On every release (BW/4HANA and BW 7.5)
 
-**📊 Queries, finished in the tools**
+**📈 Query statistics without SAP GUI**
 
-- New `bw_update_query_cells` — reference, formula and help cells in two-structure queries
-- Scaling and local calculation on structure members, exception aggregation on reusable CKFs
-- `bw_get_query` shows cells, selections, calculation and exception aggregation as written
-- `bw_get_query` shows the key date and, for every variable, where the query uses it, so a
-  variable behind the key date no longer looks unused
+- New `bw_query_statistics` — executions, users, runtime percentiles and the slowest runs
+  broken down by layer, read from the BW statistics; `bw_query_data` with
+  `with_statistics` measures its own call (#44)
 
-**🧩 CompositeProviders ready for queries**
+**🔤 Formula and text variables**
 
-- Field groups and name usage (`direct` / `unique_name`) via `bw_update_composite_provider`
-- Fields named after their InfoObject use it directly, so a query finds them by that name
+- `bw_create_variable` creates formula variables (dimension, default value, unit or
+  currency) and text variables (replacement path or exit); text variables in descriptions
+  are bound so they resolve at runtime instead of showing `&NAME&` (#47)
 
-**🧭 Data flow with direction**
+**🔍 Query data that says what happened**
 
-- `bw_xref` says which way every transformation and DTP points (upstream / downstream)
-- Aggregation levels and planning functions appear in the where-used list with direction,
-  so the planning input of a provider is visible in its lineage
+- `bw_query_data` filters hierarchy nodes, keeps interval bounds, says whether more rows
+  follow and lists what BW did not apply (#45); `bw_get_query` shows display hierarchies
 
-**🛡️ No silent no-ops**
+**🛠️ Fixes**
 
-- A writing tool refuses a parameter it does not declare instead of reporting success
-- `bw_get_transformation` and the classic metadata reader show the aggregation type per rule
+- A short dump no longer leaves the server unable to lock; amount key figures activate;
+  creates work behind a BTP destination and release their lock when they fail; master
+  system read from the system (#34); rate limit per client on Cloud Foundry (#35);
+  dependency advisories cleared (#40)
 
-**☁️ Hosted on SAP BTP**
-
-- The login no longer asks for the `read` scope alone, so a caller with the developer role
-  gets the write tools in every MCP client, and an analyst-only role is accepted
-
-### BW/4HANA specific
-
-**🔁 Transformation rules**
-
-- Aggregation type per rule into a target key figure (`SUM`, `MOV`, `MIN`, `MAX`, `NOP`)
-  via `bw_update_transformation` — a key figure left on `MOV` in an aggregating
-  transformation no longer has to be fixed by hand
-- Currency and unit conversion on direct rules; rules on currency or unit key figures
-  now activate
-
-### BW 7.5 specific
-
-**🏛️ Lineage where no REST route exists**
-
-- `bw_xref` lists the analysis processes that write to or read from a provider
-- `bw_read_metadata_tables` reads InfoPackages (selections, routines, file settings, load
-  history), the field rules of analysis processes and the global part of transformation routines
-- Classic DSOs, InfoCubes and MultiProviders list their fields with meaning; MultiProvider
-  parts come with their type
-- The DTP filter is readable through an optional helper endpoint in `bw75/`
-- Metadata reads on a BTP-hosted instance no longer fail with HTTP 500 at the start of a call
-
-**On BW/4HANA nothing breaks** — what a classic release needs is added beside the existing
-behaviour, never in place of it.
+Thanks to @MWKAnalytics and @oliverluette for the analyses behind #44, #45 and #47.
 
 ---
 
-**Earlier releases** — the "What's New" notes for v1.6.0 and older are archived in [WHATS_NEW.md](WHATS_NEW.md); the full structured history is in [CHANGELOG.md](CHANGELOG.md).
+**Earlier releases** — the "What's New" notes for v1.7.0 and older are archived in [WHATS_NEW.md](WHATS_NEW.md); the full structured history is in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
 ## What it can do
 
-An overview by area. Every tool in detail — parameters, behaviour, and the sequences it belongs in — is in the **[Tools Reference](TOOLS.md)** (122 tools).
+An overview by area. Every tool in detail — parameters, behaviour, and the sequences it belongs in — is in the **[Tools Reference](TOOLS.md)** (123 tools).
 
 <p align="center">
   <picture>
@@ -276,8 +294,8 @@ endpoint reference.
 
 ## Roadmap
 
-- **Tool consolidation** — collapse today's one-tool-per-operation surface into a small set of verb-based tools (`bw_read`, `bw_find`, `bw_write_*`, …) that cover the same operations. Same functionality, a single consistent `name` parameter across all reads, and each new operation then costs one enum value instead of a whole new tool — so coverage keeps growing while the surface stays within MCP clients' tool limits.
-- **More modeling & Cockpit coverage** — integrate and complete further BW modeling and BW/4HANA Cockpit operations, e.g. Open ODS Views, further planning objects, additional runtime and monitoring operations, and further modeling objects.
+- **Focused mode** — an optional, reduced tool surface: a handful of broad tools in place of
+  the full set, for clients and models that work better with fewer tools to choose from.
 
 ---
 
